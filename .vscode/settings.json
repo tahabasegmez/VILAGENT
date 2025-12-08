@@ -1,0 +1,14 @@
+{
+    "mcp.servers": {
+        "yerel-araclar": {
+            "command": "C:\\Users\\MONSTER\\miniconda3\\envs\\vilag\\python.exe",
+            "args": [
+                "${workspaceFolder}/servers/denemeserver/denemeserver.py"
+            ],
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "enabled": true
+        }
+    }
+}

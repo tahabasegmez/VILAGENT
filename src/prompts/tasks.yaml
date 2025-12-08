@@ -1,0 +1,62 @@
+# VILAGENT Task Definitions
+# Specific task templates and instructions for common operations
+
+tasks:
+  click_button:
+    description: "Click a button on the screen"
+    steps:
+      - "Use 'analyze_screen_using_omni' or 'inspect_ui_tree' to find the button"
+      - "Extract button coordinates"
+      - "Use 'move_and_click' with the coordinates"
+      - "Verify the action was successful"
+
+  type_text:
+    description: "Type text into an application"
+    steps:
+      - "Use 'list_running_apps' to find the target application"
+      - "Use 'focus_app' to bring the window to front"
+      - "Wait a moment for window to focus"
+      - "Use 'type_text' to enter the text"
+      - "Verify text was entered correctly"
+
+  navigate_menu:
+    description: "Navigate through application menus"
+    steps:
+      - "Analyze current screen state"
+      - "Identify menu items using visual analysis"
+      - "Click on menu items in sequence"
+      - "Verify navigation was successful"
+
+  fill_form:
+    description: "Fill out a form with multiple fields"
+    steps:
+      - "Use 'inspect_ui_tree' to understand form structure"
+      - "For each field: focus, type, verify"
+      - "Submit form when complete"
+
+  find_and_click:
+    description: "Find a UI element by description and click it"
+    steps:
+      - "Use 'analyze_screen_using_omni' to get screen elements"
+      - "Search for element matching description"
+      - "Extract coordinates"
+      - "Click the element"
+      - "Verify action"
+
+common_patterns:
+  window_management:
+    - "Always list running apps before focusing"
+    - "Wait for window to be ready after focusing"
+    - "Check screen resolution for coordinate calculations"
+
+  error_recovery:
+    - "If click fails, try using accessibility tree"
+    - "If coordinates are wrong, re-analyze screen"
+    - "If window not found, list apps again"
+
+  best_practices:
+    - "Use relative coordinates (0.0-1.0) when possible"
+    - "Prefer accessibility tools over vision when available"
+    - "Always verify actions completed successfully"
+    - "Provide clear feedback about what you're doing"
+
