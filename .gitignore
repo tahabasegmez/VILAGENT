@@ -1,5 +1,12 @@
 # Vilagent Project Specific Ignore Files
-
+*.vscode/
+.vscode/
+.vscode
+conda-activate-vilagent.ps1
+*.env
+.env.*
+.code-workspace
+*.code-workspace
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
