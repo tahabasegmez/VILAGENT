@@ -1,5 +1,9 @@
 ---PEP8
+
+
 *PEP8: Proje geliştirilirken PEP8 kullanacağız.
+
+*Note: Bu dökümanı VS Code ile açın.
 
 *1. Dil: Değişkenler, fonksiyonlar ve yorumlar %100 İngilizce olmalıdır.
 
