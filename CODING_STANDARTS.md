@@ -100,13 +100,15 @@ def EkranOrtasi(w, h): # Türkçe ve belirsiz isimler yasak
     if confidence > 0.8:
         click_target()
 
-    *7.1. Etiketleme :
+    *7.1. Etiketleme : 
         Projeyi geliştirirken eksik veya hatalı yerleri unutmamak için standart etiketler kullanın.
-
+        
         # TODO: Yapılacak ama acil olmayan işler.
         # FIXME: Çalışıyor ama bozuk veya hatalı, hemen düzeltilmeli.
         # NOTE: Dikkat edilmesi gereken önemli bir bilgi.
         # OPTIMIZE: Çalışıyor ama performansı artırılabilir.
+
+        İlgili döküman: https://www.conventionalcommits.org/en/v1.0.0/
 
         # ✅ Örnek:
         def capture_screen():
