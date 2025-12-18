@@ -1,1 +1,1 @@
-# VILAGENT Core
+# VILAGENT
