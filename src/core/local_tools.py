@@ -38,9 +38,9 @@ from typing import Any, Dict, Optional
 from .state import ToolResult, now_ms
 
 
-# -----------------------------
+ 
 # Helpers
-# -----------------------------
+ 
 
 def _ok(data: Any = None) -> ToolResult:
     return ToolResult(ok=True, data=data)
@@ -50,9 +50,9 @@ def _err(msg: str) -> ToolResult:
     return ToolResult(ok=False, error=msg)
 
 
-# -----------------------------
+ 
 # Minimal local tools
-# -----------------------------
+ 
 
 def wait(args: Dict[str, Any]) -> ToolResult:
     """
@@ -81,9 +81,9 @@ def ping(args: Dict[str, Any]) -> ToolResult:
     return _ok({"echo": args.get("echo"), "ts_ms": now_ms()})
 
 
-# -----------------------------
+ 
 # Clipboard (local convenience)
-# -----------------------------
+ 
 # Clipboard is typically safe locally and often needed for UI workflows.
 # If you want strict DLP / auditing, move clipboard to keyboard_server (MCP).
 
@@ -113,9 +113,9 @@ def clipboard_set(args: Dict[str, Any]) -> ToolResult:
         return _err(f"CLIPBOARD_SET_ERROR: {type(e).__name__}: {e}")
 
 
-# -----------------------------
+ 
 # Export
-# -----------------------------
+ 
 
 def get_local_tools() -> Dict[str, Any]:
     """
@@ -131,9 +131,9 @@ def get_local_tools() -> Dict[str, Any]:
     }
 
 
-# -----------------------------
+ 
 # MCP-first tool list (for your reference, NOT implemented here)
-# -----------------------------
+ 
 """
 Prefer MCP servers for the following:
 
@@ -169,9 +169,9 @@ db_server / rag_server:
 """
 
 
-# -----------------------------------------------------------------------------
-# DERS NOTU (local_tools.py) — Lokal (MCP dışı) tool implementasyonları
-# -----------------------------------------------------------------------------
+
+#(local_tools.py) — Lokal (MCP dışı) tool implementasyonları
+
 # Bu dosya, “lokalde çalıştırılması güvenli ve deterministik” olan küçük araçları
 # (tool) içerir. Mimari prensip:
 #

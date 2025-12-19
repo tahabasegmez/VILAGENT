@@ -30,9 +30,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
 
-# -----------------------------
+  
 # Basic Types
-# -----------------------------
+  
 
 Status = Literal[
     "INIT",
@@ -51,9 +51,9 @@ Status = Literal[
 Risk = Literal["LOW", "MEDIUM", "HIGH"]
 
 
-# -----------------------------
+  
 # Error Codes (centralized)
-# -----------------------------
+  
 
 class ErrorCode:
     """
@@ -116,9 +116,9 @@ def fingerprint(obj: Any) -> str:
     return str(abs(hash(stable_json(obj))))
 
 
-# -----------------------------
+  
 # Telemetry (events + spans)
-# -----------------------------
+  
 
 @dataclass
 class Span:
@@ -153,9 +153,9 @@ class Telemetry:
         return sp
 
 
-# -----------------------------
+  
 # Plan Contracts
-# -----------------------------
+  
 
 @dataclass
 class Step:
@@ -220,9 +220,9 @@ class Plan:
         return self.current_step_idx >= len(self.steps)
 
 
-# -----------------------------
+  
 # Perception / UI Snapshot
-# -----------------------------
+  
 
 @dataclass
 class PerceptionSnapshot:
@@ -242,9 +242,9 @@ class PerceptionSnapshot:
     ts_ms: int = field(default_factory=now_ms)
 
 
-# -----------------------------
+  
 # Actions (audit + idempotency)
-# -----------------------------
+  
 
 @dataclass
 class ActionRecord:
@@ -264,9 +264,9 @@ class ActionRecord:
     effect_fingerprint: Optional[str] = None
 
 
-# -----------------------------
+  
 # Policy + Approval Gate
-# -----------------------------
+  
 
 @dataclass
 class PolicyContext:
@@ -283,9 +283,9 @@ class PolicyContext:
     deny_reason: Optional[str] = None
 
 
-# -----------------------------
+  
 # Retry & Budgets
-# -----------------------------
+  
 
 @dataclass
 class RetryBudget:
@@ -308,9 +308,9 @@ class RetryBudget:
         self.step_retry_counts[step_id] = self.step_retry_counts.get(step_id, 0) + 1
 
 
-# -----------------------------
+  
 # Tool Contracts (used by nodes/router)
-# -----------------------------
+  
 
 @dataclass
 class ToolCall:
@@ -334,9 +334,9 @@ class ToolResult:
     error: Optional[str] = None
 
 
-# -----------------------------
+  
 # Agent State (single source of truth)
-# -----------------------------
+  
 
 @dataclass
 class AgentState:
@@ -400,9 +400,9 @@ class AgentState:
         self.telemetry.event("terminal", status=status, reason=reason, code=code)
 
 
-# -----------------------------------------------------------------------------
-# DERS NOTU (state.py) — “Tek Gerçek Kaynak” veri sözleşmeleri
-# -----------------------------------------------------------------------------
+
+# (state.py) — “Tek Gerçek Kaynak” veri sözleşmeleri
+
 # Bu dosya, ajanın tüm çalışma zamanı durumunu ve çekirdek veri tiplerini tanımlar.
 # LangGraph, MCP, UIA, OmniParser gibi teknolojilere özel importlar burada yoktur;
 # amaç: state şemasını framework bağımsız tutmak.

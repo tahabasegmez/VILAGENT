@@ -33,9 +33,9 @@ from . import edges as E
 from .local_tools import get_local_tools
 
 
-# -----------------------------
+  
 # Tooling configuration (scalable)
-# -----------------------------
+  
 
 @dataclass(frozen=True)
 class ToolingConfig:
@@ -130,9 +130,9 @@ def default_mcp_map() -> MCPMap:
     )
 
 
-# -----------------------------
+  
 # MCP client contract
-# -----------------------------
+  
 
 class MCPClient:
     """
@@ -142,9 +142,9 @@ class MCPClient:
         raise NotImplementedError
 
 
-# -----------------------------
+  
 # Tool Registry + Executor
-# -----------------------------
+  
 
 LocalToolFn = Callable[[Dict[str, Any]], ToolResult]
 
@@ -240,9 +240,9 @@ class DefaultToolExecutor:
         return res
 
 
-# -----------------------------
+  
 # Dependency bundle
-# -----------------------------
+  
 
 @dataclass(frozen=True)
 class RuntimeDeps:
@@ -259,9 +259,9 @@ class RuntimeDeps:
     store_screenshot_b64: bool = False  # MCP vision_server should support image_hash resolution if False
 
 
-# -----------------------------
+  
 # Executor lifecycle (per-run, persisted in state)
-# -----------------------------
+  
 
 _EXECUTOR_KEY = "_executor_v1"
 
@@ -274,9 +274,9 @@ def _get_executor(state: AgentState, deps: RuntimeDeps) -> DefaultToolExecutor:
     return ex
 
 
-# -----------------------------
+  
 # Graph builder
-# -----------------------------
+  
 
 def build_workflow(deps: RuntimeDeps):
     g = StateGraph(AgentState)
@@ -389,9 +389,9 @@ def build_workflow(deps: RuntimeDeps):
     return g.compile()
 
 
-# -----------------------------------------------------------------------------
-# DERS NOTU (workflow.py) — LangGraph kablolama + tool dispatch (güncel yapı)
-# -----------------------------------------------------------------------------
+
+# (workflow.py) — LangGraph kablolama + tool dispatch (güncel yapı)
+
 # Bu dosya, çekirdeğin “entegrasyon” katmanıdır: LangGraph ile graph kurar ve
 # nodes.py fonksiyonlarını runtime bağımlılıklarla bağlayarak çalıştırılabilir hale
 # getirir.

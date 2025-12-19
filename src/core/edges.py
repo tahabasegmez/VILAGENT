@@ -36,9 +36,9 @@ from typing import Literal
 from .state import AgentState
 
 
-# -----------------------------
+ 
 # Node key constants
-# -----------------------------
+ 
 
 NODE_INITIALIZE = "initialize"
 NODE_PLAN = "plan"
@@ -52,9 +52,9 @@ NODE_FINALIZE = "finalize"
 NODE_END = "end"  # workflow.py will map "end" -> END
 
 
-# -----------------------------
+ 
 # Routing primitives
-# -----------------------------
+ 
 
 def route_from_initialize(state: AgentState) -> str:
     # initialize should always go planning
@@ -172,9 +172,9 @@ def route_from_finalize(state: AgentState) -> str:
     return NODE_END
 
 
-# -----------------------------
+ 
 # One-shot generic router (optional)
-# -----------------------------
+ 
 
 def route_by_status(state: AgentState) -> str:
     """
@@ -211,9 +211,9 @@ def route_by_status(state: AgentState) -> str:
     return NODE_RECOVER
 
 
-# -----------------------------------------------------------------------------
+
 # DERS NOTU (edges.py) — Koşullu yönlendirme (routing) katmanı
-# -----------------------------------------------------------------------------
+
 # Bu dosya “saf” (pure) yönlendirme fonksiyonlarını içerir.
 # Saf olmasının anlamı:
 # - Dış dünya ile etkileşime girmez (tool çağırmaz).

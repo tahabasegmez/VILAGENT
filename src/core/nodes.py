@@ -1,7 +1,7 @@
 """
 nodes.py 
 
-Scalable LangGraph node implementations
+Scalable LangGraph node implementation
 
 Update goals:
 - Remove hardcoded tool names from nodes; accept ToolingConfig injection from workflow.py.
@@ -29,7 +29,6 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from .state import (
     AgentState,
-    ErrorCode,
     Plan,
     Step,
     ToolCall,
@@ -42,9 +41,9 @@ from .state import (
 )
 
 
-# -----------------------------
+ 
 # Executor + ToolingConfig protocols
-# -----------------------------
+ 
 
 class ToolExecutor(Protocol):
     def call(self, call: ToolCall) -> ToolResult: ...
@@ -83,9 +82,9 @@ class ToolingConfigLike(Protocol):
     clipboard_set: str
 
 
-# -----------------------------
+ 
 # Planner / Selector / Verifier / Recovery contracts
-# -----------------------------
+ 
 
 PlannerFn = Callable[[AgentState], Plan]
 ActionSelectorFn = Callable[[AgentState, ToolingConfigLike], List[ToolCall]]
@@ -93,9 +92,9 @@ VerifierFn = Callable[[AgentState, ToolingConfigLike], Tuple[bool, Dict[str, Any
 RecoveryFn = Callable[[AgentState, ToolingConfigLike], List[ToolCall]]
 
 
-# -----------------------------
+ 
 # Internal helpers
-# -----------------------------
+ 
 
 def _ensure_plan(state: AgentState) -> bool:
     return state.plan is not None and state.plan.is_valid
@@ -114,13 +113,13 @@ def _terminal_fail(state: AgentState, reason: str, code: str) -> AgentState:
     return state
 
 
-def _terminal_escalate(state: AgentState, reason: str, code: str = ErrorCode.ESCALATED) -> AgentState:
+def _terminal_escalate(state: AgentState, reason: str, code: str = "ESCALATED") -> AgentState:
     state.set_terminal("ESCALATED", reason, code=code)
     return state
 
 
 def _terminal_done(state: AgentState, reason: str) -> AgentState:
-    state.set_terminal("DONE", reason, code=ErrorCode.DONE)
+    state.set_terminal("DONE", reason, code="DONE")
     return state
 
 
@@ -160,9 +159,9 @@ def _toolcall_key(state: AgentState, step: Step, tool: str, args: Dict[str, Any]
     return f"{base}:{suffix}" if suffix else base
 
 
-# -----------------------------
+ 
 # Nodes
-# -----------------------------
+ 
 
 def node_initialize(state: AgentState) -> AgentState:
     sp = state.telemetry.span("node_initialize")
@@ -185,7 +184,7 @@ def node_plan(state: AgentState, planner: PlannerFn) -> AgentState:
 
         plan = planner(state)
         if not isinstance(plan, Plan) or not plan.steps:
-            return _terminal_fail(state, "Planner returned empty/invalid plan", ErrorCode.PLAN_INVALID)
+            return _terminal_fail(state, "Planner returned empty/invalid plan", "PLAN_INVALID")
 
         plan.finalize()
         state.plan = plan
@@ -202,7 +201,7 @@ def node_plan(state: AgentState, planner: PlannerFn) -> AgentState:
         return state
     except Exception as e:
         state.telemetry.event("plan_error", error=_safe_err(e))
-        return _terminal_fail(state, f"Planner error: {_safe_err(e)}", ErrorCode.PLAN_ERROR)
+        return _terminal_fail(state, f"Planner error: {_safe_err(e)}", "PLAN_ERROR")
     finally:
         sp.close()
 
@@ -234,9 +233,9 @@ def node_perceive(
     sp = state.telemetry.span("node_perceive")
     try:
         if not _ensure_plan(state):
-            return _terminal_fail(state, "Perceive called without a valid plan", ErrorCode.NO_PLAN)
+            return _terminal_fail(state, "Perceive called without a valid plan", "NO_PLAN")
         if _step_timeout_exceeded(state):
-            return _terminal_fail(state, "Step timeout exceeded (perceive)", ErrorCode.STEP_TIMEOUT)
+            return _terminal_fail(state, "Step timeout exceeded (perceive)", "STEP_TIMEOUT")
 
         step = state.plan.current
 
@@ -255,7 +254,7 @@ def node_perceive(
 
         # Capture (required)
         if not executor.has(tooling.screen_capture):
-            return _terminal_fail(state, f"Missing required tool alias: {tooling.screen_capture}", ErrorCode.TOOL_MISSING)
+            return _terminal_fail(state, f"Missing required tool alias: {tooling.screen_capture}", "TOOL_MISSING")
 
         cap_args = {"return_b64": bool(store_screenshot_b64)}
         cap = executor.call(
@@ -352,7 +351,7 @@ def node_policy_check(state: AgentState) -> AgentState:
     sp = state.telemetry.span("node_policy_check")
     try:
         if not _ensure_plan(state):
-            return _terminal_fail(state, "Policy check called without a valid plan", ErrorCode.NO_PLAN)
+            return _terminal_fail(state, "Policy check called without a valid plan", "NO_PLAN")
 
         step = state.plan.current
 
@@ -388,13 +387,13 @@ def node_act(
     sp = state.telemetry.span("node_act")
     try:
         if not _ensure_plan(state):
-            return _terminal_fail(state, "Act called without a valid plan", ErrorCode.NO_PLAN)
+            return _terminal_fail(state, "Act called without a valid plan", "NO_PLAN")
         if state.perception is None:
             state.telemetry.event("act_missing_perception")
             state.status = "RECOVERING"
             return state
         if _step_timeout_exceeded(state):
-            return _terminal_fail(state, "Step timeout exceeded (act)", ErrorCode.STEP_TIMEOUT)
+            return _terminal_fail(state, "Step timeout exceeded (act)", "STEP_TIMEOUT")
 
         step = state.plan.current
         calls = selector(state, tooling)
@@ -437,7 +436,7 @@ def node_act(
             if not res.ok:
                 if res.error and str(res.error).startswith("POLICY_DENY"):
                     state.telemetry.event("policy_denied_runtime", step_id=step.id, tool=call.name, error=res.error)
-                    return _terminal_escalate(state, f"Policy denied tool at runtime: {res.error}", ErrorCode.POLICY_DENY)
+                    return _terminal_escalate(state, f"Policy denied tool at runtime: {res.error}", "POLICY_DENY")
 
                 state.telemetry.event("action_failed", step_id=step.id, tool=call.name, error=res.error)
                 state.status = "RECOVERING"
@@ -458,12 +457,12 @@ def node_verify(state: AgentState, tooling: ToolingConfigLike, verifier: Verifie
     sp = state.telemetry.span("node_verify")
     try:
         if not _ensure_plan(state):
-            return _terminal_fail(state, "Verify called without a valid plan", ErrorCode.NO_PLAN)
+            return _terminal_fail(state, "Verify called without a valid plan", "NO_PLAN")
         if state.perception is None:
             state.status = "RECOVERING"
             return state
         if _step_timeout_exceeded(state):
-            return _terminal_fail(state, "Step timeout exceeded (verify)", ErrorCode.STEP_TIMEOUT)
+            return _terminal_fail(state, "Step timeout exceeded (verify)", "STEP_TIMEOUT")
 
         step = state.plan.current
         ok, details = verifier(state, tooling)
@@ -497,7 +496,7 @@ def node_recover(
     sp = state.telemetry.span("node_recover")
     try:
         if not _ensure_plan(state):
-            return _terminal_fail(state, "Recover called without a valid plan", ErrorCode.NO_PLAN)
+            return _terminal_fail(state, "Recover called without a valid plan", "NO_PLAN")
 
         step = state.plan.current
 
@@ -510,7 +509,7 @@ def node_recover(
                 step_used=state.retry.step_retry_counts.get(step.id, 0),
                 step_max=step.max_retries,
             )
-            return _terminal_fail(state, f"Retry exhausted for step {step.id}", ErrorCode.RETRY_EXHAUSTED)
+            return _terminal_fail(state, f"Retry exhausted for step {step.id}", "RETRY_EXHAUSTED")
 
         state.retry.consume(step.id)
         state.telemetry.event(
@@ -539,13 +538,13 @@ def node_recover(
             )
 
             if not res.ok and res.error and str(res.error).startswith("POLICY_DENY"):
-                return _terminal_escalate(state, f"Policy denied recovery tool: {res.error}", ErrorCode.POLICY_DENY)
+                return _terminal_escalate(state, f"Policy denied recovery tool: {res.error}", "POLICY_DENY")
 
         state.status = "PERCEIVING"
         return state
     except Exception as e:
         state.telemetry.event("recover_error", error=_safe_err(e), traceback=traceback.format_exc())
-        return _terminal_fail(state, f"Recovery error: {_safe_err(e)}", ErrorCode.RECOVERY_ERROR)
+        return _terminal_fail(state, f"Recovery error: {_safe_err(e)}", "RECOVERY_ERROR")
     finally:
         sp.close()
 
@@ -575,9 +574,9 @@ def node_finalize(state: AgentState) -> AgentState:
         sp.close()
 
 
-# -----------------------------
+ 
 # Optional helper builders (selectors can use these)
-# -----------------------------
+ 
 
 def build_click_from_bbox(state: AgentState, tooling: ToolingConfigLike, bbox: List[int]) -> ToolCall:
     if not _ensure_plan(state):
@@ -617,104 +616,3 @@ def build_hotkey(state: AgentState, tooling: ToolingConfigLike, keys: List[str])
         idempotency_key=_toolcall_key(state, step, tooling.hotkey, args),
         timeout_ms=15_000,
     )
-
-
-# -----------------------------------------------------------------------------
-# DERS NOTU (nodes.py) — Node iş mantığı (ToolingConfig injection ile)
-# -----------------------------------------------------------------------------
-# Bu dosya, LangGraph “node” fonksiyonlarını framework bağımsız şekilde uygular.
-# Yani burada LangGraph import edilmez; StateGraph/END gibi kavramlar workflow.py’de.
-#
-# Temel prensip:
-# - AgentState tek mutable nesnedir.
-# - Her node fonksiyonu AgentState’i okur/değiştirir ve geri döndürür.
-# - Akış kararı edges.py’deki router fonksiyonları ile (state.status üzerinden) verilir.
-#
-# Bu sürümde önceki tasarıma göre ana fark:
-# - Tool isimleri hardcode edilmez.
-# - workflow.py’den “ToolingConfig” benzeri bir nesne enjekte edilir.
-# - Nodes, sadece “alias” ile çalışır; local/mcp ayrımını executor çözer.
-#
-# 1) Protocol’ler (sözleşmeler)
-#    - ToolExecutor:
-#      call(ToolCall) -> ToolResult
-#      has(tool_alias) -> bool
-#      Bu executor, tool alias’ını ya local python fonksiyonuna ya da MCP
-#      fully-qualified tool’a yönlendirir.
-#
-#    - ToolingConfigLike:
-#      nodes.py’nin ihtiyaç duyduğu tüm tool alias alanlarını listeler.
-#      Bu, “hangi tool’lar var?” sorusunun tek yerden tanımlanmasını sağlar.
-#
-# 2) Dış bağımlılıklar (injected fonksiyonlar)
-#    - PlannerFn: state -> Plan
-#    - ActionSelectorFn: (state, tooling) -> list[ToolCall]
-#    - VerifierFn: (state, tooling) -> (ok, details)
-#    - RecoveryFn: (state, tooling) -> list[ToolCall]
-#
-# 3) İç yardımcılar
-#    - _ensure_plan: plan var mı/geçerli mi?
-#    - _step_timeout_exceeded: step timeout guard.
-#    - _terminal_fail/_terminal_escalate/_terminal_done: terminal durum set eder.
-#    - _record_action: ActionRecord append-only log.
-#    - _toolcall_key: deterministik idempotency_key üretir:
-#      run_id:step_id:tool_alias:fingerprint(args)[:suffix]
-#
-# 4) Node akışı (yüksek seviye)
-#    4.1 node_initialize
-#      - run_id üretir, policy default’larını kurar.
-#      - status -> PLANNING
-#
-#    4.2 node_plan
-#      - planner(state) çağrılır.
-#      - plan.finalize() ile fingerprint üretilir.
-#      - status -> PERCEIVING, last_step_started_ms set edilir.
-#
-#    4.3 node_perceive (MCP-friendly)
-#      - focus_window: scratch["focus_hint"] varsa (opsiyonel).
-#      - screen_capture: zorunlu (alias: tooling.screen_capture).
-#      - uia_tree: prefer_uia_tree True ve tool varsa.
-#      - omniparser_v2_parse: scratch["need_vision"] ve omniparser_enabled ile kontrol edilir.
-#
-#      “Payload stratejisi” özellikle önemli:
-#      - store_screenshot_b64=False ise:
-#        screen_capture en azından hash döndürmeli ve omniparser server-side hash ile
-#        görseli resolve edebilmelidir.
-#      - store_screenshot_b64=True ise:
-#        b64 doğrudan omniparser’a gönderilir (debug/replay için daha pahalı).
-#
-#      Çıktı:
-#      - state.perception = PerceptionSnapshot
-#      - status -> POLICY_CHECK
-#
-#    4.4 node_policy_check
-#      - HIGH risk adımlarda require_approval_for_high_risk True ise:
-#        approved değilken WAITING_APPROVAL’a geçirir.
-#      - aksi halde status -> ACTING
-#
-#    4.5 node_act
-#      - selector(state, tooling) -> ToolCall[] üretir.
-#      - executor.call ile çalıştırır, ActionRecord ekler.
-#      - post_action_capture True ise her aksiyondan sonra screen_capture hash alıp
-#        effect_fingerprint’e yazar.
-#      - runtime POLICY_DENY olursa ESCALATED.
-#      - başarı -> status -> VERIFYING
-#
-#    4.6 node_verify
-#      - verifier(state, tooling) -> (ok, details)
-#      - ok ise plan.advance(); bitti -> DONE, değil -> PERCEIVING
-#      - ok değil -> RECOVERING
-#
-#    4.7 node_recover
-#      - RetryBudget + Step.max_retries ile guard.
-#      - recovery(state, tooling) toolcall’larını çalıştırır.
-#      - sonra status -> PERCEIVING
-#
-#    4.8 node_waiting_approval / node_finalize
-#      - waiting_approval dış sistemin approved=True yapmasını bekler.
-#      - finalize son telemetri snapshot’ı içindir.
-#
-# 5) Helper builder’lar
-#    - build_click_from_bbox / build_type / build_hotkey
-#      Selector/Recovery yazarken ToolCall üretimini standartlaştırır.
-
