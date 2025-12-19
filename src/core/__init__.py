@@ -1,8 +1,7 @@
 # VILAGENT Core
 
-# -----------------------------------------------------------------------------
-# DERS NOTU (src/core paketine genel bakış)
-# -----------------------------------------------------------------------------
+# (src/core paketine genel bakış)
+
 # Bu paket, ajanınızın “çekirdek yürütme döngüsünü” (planla → algıla → politika
 # kontrolü → aksiyon al → doğrula → gerekirse toparlan/recover) tanımlar.
 #
