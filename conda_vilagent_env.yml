@@ -1,0 +1,13 @@
+name: vilagent
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - fastmcp
+  - openai
+  - pyautogui
+  - pywinauto
+  - langgraph
+  - langchain
+  - python-dotenv
+  - ultralytics
