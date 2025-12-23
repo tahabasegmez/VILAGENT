@@ -2,9 +2,7 @@
 
 A vision-language agent system that combines computer vision and language models to interact with graphical user interfaces.
 
-## Project Structure
-
-See `CODING_STANDARTS.md` for detailed project structure and coding standards.
+See `CODING_STANDARTS.md` for detailed coding standards.
 
 ## Setup (Conda)
 
