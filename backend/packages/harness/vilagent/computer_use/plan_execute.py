@@ -197,6 +197,8 @@ Rules:
 - environment: 'native' Windows UI or 'browser'.
 - requires_vision: false only when the command has an unambiguous keyboard / UIA / DOM equivalent (keyboard, text-entry, UIA, or DOM equivalent); true when visual understanding of the screen is needed. Prefer deterministic input steps over visual actions. Prefer deterministic over visual.
 - To enter text, numbers, or a calculation, use ONE type_text step: action_kind="type_text", requires_vision=false, and put the exact literal string (with symbols like + - * / =) in args.text. The keyboard types it directly into the focused field; NEVER spell it out by visually clicking on-screen keys or buttons. Add a separate step to focus the field first only if it is not already focused.
+- To open an app, use ONE launch_app step: action_kind="launch_app", requires_vision=false, and args.app_name set to the bare app/executable name only (e.g. "edge", "notepad", "calc", "excel") — NEVER a sentence, URL, or goal. Launching and navigating are ALWAYS separate steps.
+- To open a web page, use a separate browser_action step AFTER the browser is open: action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL. Do not bundle "launch browser and go to X" into one step.
 - max_actions: bounded executor budget for that one command (4 typical for visual steps, 5-6 when popups, overlays, loading states, focus mismatch, localization, or other recoverable UI variance may appear, never >6); it does not permit merging commands.
 - Executor-ready steps: name the target and its expected current state, the exact interaction mechanism, known args/selector_hints, and the observable end state. No vague "navigate to the website" when a URL/browser action is known. Put app_name/text/keys/url in args when known; for hotkeys put canonical keys (ENTER, ESC, CTRL+L) in args.keys.
 - Separate any known preparation (focus a field, clear content, dismiss an obstruction) into its own step. If an obstruction is only possible but not guaranteed, give the affected visual step enough max_actions for the executor to dismiss or bypass it before completing the same command.
@@ -1166,10 +1168,15 @@ def _infer_action_kind(step: ComputerUsePlanStep) -> ActionKind:
 
 def _args_for_step(step: ComputerUsePlanStep, action_kind: ActionKind) -> dict[str, Any]:
     args = dict(step.args)
-    if action_kind == ActionKind.launch_app and not args.get("app_name"):
-        inferred = _infer_app_name(step.instruction)
-        if inferred:
-            args["app_name"] = inferred
+    if action_kind == ActionKind.launch_app:
+        # Normalize whatever the planner provided (or the instruction) down to a real
+        # executable/app name. A planner that sets app_name to a whole sentence like
+        # "Microsoft Edge browser and navigate to Gmail" must not be typed into Start
+        # search verbatim — extract just the app and map known browsers/apps.
+        raw = str(args.get("app_name") or args.get("command") or "").strip() or step.instruction
+        normalized = _normalize_app_name(raw)
+        if normalized:
+            args["app_name"] = normalized
     if action_kind == ActionKind.type_text and not str(args.get("text") or "").strip():
         inferred_text = _infer_type_text(step.instruction)
         if inferred_text:
@@ -1285,15 +1292,54 @@ def _windows_ui_language() -> str:
     return language.replace("_", "-") if language else "unknown"
 
 
+# Friendly app names -> Windows executables that subprocess.Popen can launch directly.
+_APP_EXECUTABLES = {
+    "edge": "msedge",
+    "microsoft edge": "msedge",
+    "msedge": "msedge",
+    "chrome": "chrome",
+    "google chrome": "chrome",
+    "firefox": "firefox",
+    "mozilla firefox": "firefox",
+    "notepad": "notepad",
+    "calculator": "calc",
+    "calc": "calc",
+    "file explorer": "explorer",
+    "explorer": "explorer",
+    "command prompt": "cmd",
+    "cmd": "cmd",
+    "powershell": "powershell",
+    "terminal": "wt",
+    "word": "winword",
+    "microsoft word": "winword",
+    "excel": "excel",
+    "microsoft excel": "excel",
+    "paint": "mspaint",
+    "settings": "ms-settings:",
+}
+
+
+def _normalize_app_name(raw: str) -> str | None:
+    """Reduce a launch instruction/app_name to a single launchable app name.
+
+    e.g. "Launch Microsoft Edge browser and navigate to Gmail" -> "msedge".
+    """
+    text = raw.strip()
+    verb = re.search(r"\b(?:open|launch|start|run)\b\s+(.+)", text, re.IGNORECASE)
+    candidate = verb.group(1) if verb else text
+    # Keep only the app, dropping any trailing clause ("... and navigate to Gmail").
+    candidate = re.split(r"\b(?:and|then|to|in|with)\b|[,;]", candidate, maxsplit=1, flags=re.IGNORECASE)[0]
+    # Drop filler words that are not part of an executable name.
+    candidate = re.sub(r"\b(?:the|a|an|browser|application|app|window|program)\b", " ", candidate, flags=re.IGNORECASE)
+    candidate = " ".join(candidate.split()).strip(" .,:;\"'")
+    if not candidate:
+        return None
+    return _APP_EXECUTABLES.get(candidate.lower(), candidate)
+
+
+# Backwards-compatible alias.
 def _infer_app_name(instruction: str) -> str | None:
-    words = instruction.strip().split()
-    lowered = [word.lower().strip(".,:;") for word in words]
-    for marker in ("open", "launch", "start"):
-        if marker in lowered:
-            index = lowered.index(marker)
-            if index + 1 < len(words):
-                return " ".join(words[index + 1 :]).strip(" .,:;") or None
-    return None
+    return _normalize_app_name(instruction)
 
 
 def _strategies_for_environment(environment: EnvironmentContext) -> list[TargetStrategy]:
