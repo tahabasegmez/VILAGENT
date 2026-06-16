@@ -165,12 +165,15 @@ def test_plan_step_requires_vision_default_true():
 @pytest.mark.parametrize(
     ("instruction", "expected"),
     [
-        ("Launch Microsoft Edge browser and navigate to Gmail", "msedge"),
+        # Generic cleanup only (no hard-coded exe map): drop the verb, trailing clause,
+        # and filler words. The planner supplies the actual executable name.
+        ("Launch Microsoft Edge browser and navigate to Gmail", "Microsoft Edge"),
         ("open notepad", "notepad"),
-        ("launch calculator", "calc"),
-        ("Start Google Chrome and search for cats", "chrome"),
-        ("open the edge browser", "msedge"),
+        ("launch calculator", "calculator"),
+        ("Start Google Chrome and search for cats", "Google Chrome"),
+        ("open the edge browser", "edge"),
         ("run excel", "excel"),
+        ("msedge", "msedge"),  # a clean exe name from the planner passes through
     ],
 )
 def test_normalize_app_name(instruction, expected):
@@ -179,12 +182,12 @@ def test_normalize_app_name(instruction, expected):
     assert _normalize_app_name(instruction) == expected
 
 
-def test_args_for_step_normalizes_a_sentence_app_name():
+def test_args_for_step_strips_a_sentence_app_name_to_the_app():
     from vilagent.computer_use.plan_execute import _args_for_step
 
     step = _step("s1", "Launch Microsoft Edge browser and navigate to Gmail", requires_vision=False, action_kind=ActionKind.launch_app, args={"app_name": "Microsoft Edge browser and navigate to Gmail"})
     args = _args_for_step(step, ActionKind.launch_app)
-    assert args["app_name"] == "msedge"  # not the whole sentence typed into Start search
+    assert args["app_name"] == "Microsoft Edge"  # the trailing clause is dropped, not typed into Start search
 
 
 # --- orchestrator deterministic (UIA) path ----------------------------------
@@ -219,7 +222,7 @@ async def test_orchestrator_infers_launch_app_name():
     result = await PlanExecuteComputerUseOrchestrator(planner=FakePlanner(plan), remote=remote, auto_approve_risk_threshold=RiskLevel.critical).run("open calculator", owner=_owner())
 
     assert result.status == StepStatus.completed
-    assert remote.step_actions[0].args["app_name"] == "calc"  # normalized to the executable
+    assert remote.step_actions[0].args["app_name"] == "calculator"  # cleaned from the instruction; launcher resolves it
 
 
 @pytest.mark.asyncio
