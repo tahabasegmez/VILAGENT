@@ -1,0 +1,15 @@
+  0            BINARY_OP                0 (+)
+               LOAD_FROM_DICT_OR_GLOBALS 0 (__doc__)
+
+  3            POP_JUMP_IF_TRUE         1 (to L1)
+               STORE_ATTR               1 (__future__)
+               POP_JUMP_IF_TRUE         3 (to L2)
+               LOAD_FROM_DICT_OR_GLOBALS 3 (asyncio)
+
+  6            POP_JUMP_IF_TRUE         1 (to L3)
+       L2:     STORE_ATTR               4 (hashlib)
+               LOAD_FROM_DICT_OR_GLOBALS 5 (subprocess)
+
+  8            POP_JUMP_IF_TRUE         1 (to L4)
+               STORE_ATTR               6 (collections.abc)
+               POP_JUMP_IF_TRUE         5 (to L5)

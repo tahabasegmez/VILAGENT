@@ -1,0 +1,24 @@
+config_version: 1
+computer_use:
+  enabled: true
+models:
+  - name: vilagent-text-glm
+    display_name: VILAGENT Text Planner (GLM API)
+    use: langchain_openai:ChatOpenAI
+    model: $VILAGENT_GLM_MODEL_NAME
+    api_key: $VILAGENT_GLM_API_KEY
+    base_url: $VILAGENT_GLM_BASE_URL
+    timeout: 60.0
+    max_retries: 1
+    max_tokens: 2048
+    temperature: 0.2
+    supports_vision: false
+
+  - name: vilagent-text-gemini
+    display_name: VILAGENT Text Planner (Gemini API)
+    use: langchain_google_genai:ChatGoogleGenerativeAI
+    model: $VILAGENT_GEMINI_MODEL_NAME
+    api_key: $VILAGENT_GEMINI_API_KEY
+    temperature: 0.2
+    supports_vision: true
+

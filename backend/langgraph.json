@@ -1,0 +1,17 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "python_version": "3.12",
+  "dependencies": [
+    "."
+  ],
+  "env": ".env",
+  "graphs": {
+    "computer_use_agent": "vilagent.computer_use.agent:make_computer_use_agent"
+  },
+  "auth": {
+    "path": "./app/gateway/langgraph_auth.py:auth"
+  },
+  "checkpointer": {
+    "path": "./packages/harness/vilagent/runtime/checkpointer/async_provider.py:make_checkpointer"
+  }
+}

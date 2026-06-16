@@ -1,0 +1,70 @@
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const path = require("node:path");
+
+const DEFAULT_OPERATOR_URL = "http://localhost:3000/operator";
+
+let mainWindow = null;
+
+function operatorUrl() {
+  return process.env.VILAGENT_OPERATOR_URL ?? DEFAULT_OPERATOR_URL;
+}
+
+function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 980,
+    minWidth: 1100,
+    minHeight: 720,
+    title: "VILAGENT Operator",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, "preload.cjs"),
+    },
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
+  void mainWindow.loadURL(operatorUrl());
+}
+
+ipcMain.handle("vilagent:get-desktop-info", () => ({
+  platform: process.platform,
+  appVersion: app.getVersion(),
+}));
+
+ipcMain.handle("vilagent:open-external", (_event, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//.test(url)) {
+    return { opened: false };
+  }
+  void shell.openExternal(url);
+  return { opened: true };
+});
+
+function bootstrap() {
+  createMainWindow();
+}
+
+app.whenReady().then(() => {
+  bootstrap();
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      bootstrap();
+    }
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
