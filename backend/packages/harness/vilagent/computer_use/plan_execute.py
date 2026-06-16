@@ -206,6 +206,8 @@ Rules:
     Spreadsheet: type a cell value -> hotkey TAB (next cell right) or ENTER (cell below).
   Pick the correct key(s) for that app's focus order.
 - max_actions: bounded executor budget for that one command (4 typical for visual steps, 5-6 when popups, overlays, loading states, focus mismatch, localization, or other recoverable UI variance may appear, never >6); it does not permit merging commands.
+- Make MANY small, separate steps rather than a few broad ones: one click, one type, one hotkey, one navigation, one wait per step. If a step could be split into two, split it. More short steps is better than one big step.
+- Write each step's instruction like explaining to a beginner who can only see the screen: in 1-2 short, plain sentences say WHAT to do, WHERE (the exact target and how to recognise it on screen — its label, color, position, or nearby text), and HOW (click / type / which key). Be explicit and unambiguous; do not be vague ("handle the page") and do not pad with filler.
 - Executor-ready steps: name the target and its expected current state, the exact interaction mechanism, known args/selector_hints, and the observable end state. No vague "navigate to the website" when a URL/browser action is known. Put app_name/text/keys/url in args when known; for hotkeys put canonical keys (ENTER, ESC, CTRL+L) in args.keys.
 - Separate any known preparation (focus a field, clear content, dismiss an obstruction) into its own step. If an obstruction is only possible but not guaranteed, give the affected visual step enough max_actions for the executor to dismiss or bypass it before completing the same command.
 - Use context.windows_ui_language for localized controls. Assess risk per step (critical = the UI's Very High).
