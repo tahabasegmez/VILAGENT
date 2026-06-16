@@ -218,6 +218,31 @@ def test_desktop_change_after_validation_blocks_immediately_before_mutation():
     asyncio.run(run())
 
 
+def test_target_less_keyboard_action_is_not_blocked_by_desktop_change():
+    async def run():
+        provider = FakeActionProvider()
+        action = ActionCommand(action_id="a", session_id="session-1", kind=ActionKind.type_text, args={"text": "12+23="}, preconditions=[], postconditions=[])
+        engine = _engine(
+            [
+                _observation("obs-1"),
+                _observation("obs-2", previous_id="obs-1", diff=0.25),
+                _observation("obs-3", previous_id="obs-2", diff=0.25),
+            ],
+            [True],
+            action_provider=provider,
+        )
+        engine._observation_provider.immediate_synthesized = True
+
+        result = await engine.execute(action, owner_id="run-1")
+
+        # Freshness is for resolved targets; a target-less keyboard action types into
+        # the focused field and must not be blocked when an app is opening/animating.
+        assert result.status == ActionStatus.succeeded
+        assert len(provider.calls) == 1
+
+    asyncio.run(run())
+
+
 def test_expected_window_mismatch_blocks_action_before_preconditions_and_mutation():
     async def run():
         provider = FakeActionProvider()

@@ -409,6 +409,10 @@ class ComputerUseStepExecutor:
             if stored.status in {ActionLifecycleStatus.pending, ActionLifecycleStatus.approved}:
                 final = await self._remote.execute_action(action.action_id, owner)
             status = _step_status_from_action(final.status)
+            final_error_code = final.error.code if getattr(final, "error", None) is not None else None
+            summary = f"{action.kind.value} -> {final.status.value}"
+            if final_error_code:
+                summary = f"{summary} ({final_error_code})"
             return resolved_session_id, StepExecutionResult(
                 step_id=step.step_id,
                 environment=step.environment,
@@ -417,7 +421,8 @@ class ComputerUseStepExecutor:
                 action_id=action.action_id,
                 action_status=final.status,
                 target=target,
-                summary=f"{action.kind.value} -> {final.status.value}",
+                error_code=final_error_code,
+                summary=summary,
             )
         except (RemoteHostOperationError, RemoteSessionNotFoundError) as exc:
             return resolved_session_id, StepExecutionResult(

@@ -72,7 +72,12 @@ class ComputerUseEngine:
         try:
             token = await self._desktop_lease.acquire(owner_id, timeout_seconds=action.timeout_seconds)
             immediate = await self._observation_provider.observe(action.session_id, previous=before)
-            immediate_error = self._validate_immediate_freshness(before, immediate)
+            # Pre-mutation freshness guards a resolved target against the screen
+            # shifting under it. Target-less keyboard actions (type_text, hotkey,
+            # focus_window) do not depend on screen stability — typing goes to the
+            # focused field regardless — so an animating/opening app must not block
+            # them with 'desktop_changed_before_mutation'.
+            immediate_error = self._validate_immediate_freshness(before, immediate) if action.target is not None else None
             if immediate_error is not None:
                 return self._result(
                     action=action,
