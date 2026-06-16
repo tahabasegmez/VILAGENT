@@ -718,6 +718,24 @@ def test_target_resolution_auto_observes_and_returns_stable_uia_target(tmp_path)
     assert resolved.json()["attempts"][0]["outcome"] == "resolved"
 
 
+def test_supervisor_source_endpoint_accepts_both_sources(tmp_path, monkeypatch):
+    # Isolate the persisted state file so the test does not touch the real one.
+    monkeypatch.setattr(computer_use, "_STATE_FILE_PATH", tmp_path / "state.json")
+    client = _client(tmp_path)
+
+    assert client.get("/api/computer-use/vision/supervisor").status_code == 200
+
+    # Regression: SupervisorSourceUpdateRequest used Literal without importing it,
+    # so POSTing either source 500'd when pydantic lazily built the model.
+    for source in ("planner", "api"):
+        response = client.post("/api/computer-use/vision/supervisor", json={"source": source})
+        assert response.status_code == 200, response.text
+        assert response.json()["source"] == source
+
+    # Literal validation still rejects unknown sources.
+    assert client.post("/api/computer-use/vision/supervisor", json={"source": "nope"}).status_code == 422
+
+
 def test_action_submission_is_owner_scoped_idempotent_and_rejects_conflicts(tmp_path):
     client = _client(tmp_path)
     owner = {"thread_id": "thread-1", "run_id": "run-1", "agent_id": "agent-1"}
