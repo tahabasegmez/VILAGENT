@@ -350,6 +350,32 @@ async def test_vision_wait_and_mouse_move_handled_locally_not_as_browser_action(
     assert any(a.kind == ActionKind.click for a in remote.step_actions)  # the real click ran
 
 
+@pytest.mark.asyncio
+async def test_type_text_step_is_deterministic_even_if_marked_vision(monkeypatch):
+    """Typing must never go through the vision model (which clicks on-screen keys and
+    falsely 'finishes'); it runs deterministically and the literal text is inferred
+    from the instruction when the planner omitted args.text."""
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _vision_config())
+
+    def _no_vision(*args, **kwargs):
+        raise AssertionError("typing must not use the vision provider")
+
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.FaraVisionActionProvider", _no_vision)
+
+    plan = ComputerUsePlan(goal="calc", steps=[_step("s1", "Type calculation '12+23='", requires_vision=True, action_kind=ActionKind.type_text)])
+    remote = FakeRemote()
+    result = await PlanExecuteComputerUseOrchestrator(
+        planner=FakePlanner(plan),
+        remote=remote,
+        auto_approve_risk_threshold=RiskLevel.critical,
+    ).run("calc", owner=_owner())
+
+    assert result.status == StepStatus.completed
+    typed = [a for a in remote.step_actions if a.kind == ActionKind.type_text]
+    assert typed, "expected a deterministic type_text action"
+    assert typed[0].args.get("text") == "12+23="  # extracted from the quoted instruction
+
+
 class _UncertainRemote(FakeRemote):
     """Every executed action comes back uncertain, simulating a stuck vision step."""
 

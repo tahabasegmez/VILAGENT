@@ -11,7 +11,23 @@ from __future__ import annotations
 
 import pytest
 
-from vilagent.computer_use.windows.action import _flatten_hotkey_tokens, _pywinauto_hotkey
+from vilagent.computer_use.windows.action import _escape_send_keys, _flatten_hotkey_tokens, _pywinauto_hotkey
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("12+23=", "12{+}23="),  # '+' must be escaped or pywinauto reads it as Shift
+        ("a^b%c~d", "a{^}b{%}c{~}d"),
+        ("(1)", "{(}1{)}"),
+        ("[x]", "{[}x{]}"),
+        ("{y}", "{{}y{}}"),
+        ("hello world", "hello world"),
+        ("3*4-1/2", "3*4-1/2"),
+    ],
+)
+def test_escape_send_keys(raw, expected):
+    assert _escape_send_keys(raw) == expected
 
 
 @pytest.mark.parametrize(

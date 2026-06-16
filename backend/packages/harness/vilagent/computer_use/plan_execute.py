@@ -21,6 +21,7 @@ import base64
 import locale
 import logging
 import os
+import re
 import uuid
 import json
 import httpx
@@ -195,6 +196,7 @@ Rules:
 - One step = exactly one user-visible command. Put every check / verify / retry / sort-direction decision in its OWN step; never bundle execution and double-checking.
 - environment: 'native' Windows UI or 'browser'.
 - requires_vision: false only when the command has an unambiguous keyboard / UIA / DOM equivalent (keyboard, text-entry, UIA, or DOM equivalent); true when visual understanding of the screen is needed. Prefer deterministic input steps over visual actions. Prefer deterministic over visual.
+- To enter text, numbers, or a calculation, use ONE type_text step: action_kind="type_text", requires_vision=false, and put the exact literal string (with symbols like + - * / =) in args.text. The keyboard types it directly into the focused field; NEVER spell it out by visually clicking on-screen keys or buttons. Add a separate step to focus the field first only if it is not already focused.
 - max_actions: bounded executor budget for that one command (4 typical for visual steps, 5-6 when popups, overlays, loading states, focus mismatch, localization, or other recoverable UI variance may appear, never >6); it does not permit merging commands.
 - Executor-ready steps: name the target and its expected current state, the exact interaction mechanism, known args/selector_hints, and the observable end state. No vague "navigate to the website" when a URL/browser action is known. Put app_name/text/keys/url in args when known; for hotkeys put canonical keys (ENTER, ESC, CTRL+L) in args.keys.
 - Separate any known preparation (focus a field, clear content, dismiss an obstruction) into its own step. If an obstruction is only possible but not guaranteed, give the affected visual step enough max_actions for the executor to dismiss or bypass it before completing the same command.
@@ -353,7 +355,10 @@ class ComputerUseStepExecutor:
         action_kind = step.action_kind or _infer_action_kind(step)
         try:
             config = get_app_config()
-            if step.requires_vision and action_kind not in {ActionKind.launch_app, ActionKind.hotkey}:
+            # Typing, launching, and hotkeys are deterministic keyboard operations
+            # and must never be done by visually clicking on-screen keys (which is
+            # unreliable and lets the vision model falsely 'finish' after one click).
+            if step.requires_vision and action_kind not in {ActionKind.launch_app, ActionKind.hotkey, ActionKind.type_text}:
                 if self._selected_vision_provider(config) in ("fara", "ui_tars"):
                     return await self._execute_fara_vision_loop(
                         step,
@@ -1139,7 +1144,25 @@ def _args_for_step(step: ComputerUsePlanStep, action_kind: ActionKind) -> dict[s
         inferred = _infer_app_name(step.instruction)
         if inferred:
             args["app_name"] = inferred
+    if action_kind == ActionKind.type_text and not str(args.get("text") or "").strip():
+        inferred_text = _infer_type_text(step.instruction)
+        if inferred_text:
+            args["text"] = inferred_text
     return args
+
+
+def _infer_type_text(instruction: str) -> str | None:
+    """Best-effort extraction of the literal text to type from a step instruction.
+
+    Used only when the planner set a type_text step without an explicit args.text.
+    """
+    quoted = re.search(r"['\"‘’“”]([^'\"‘’“”]+)['\"‘’“”]", instruction)
+    if quoted:
+        return quoted.group(1).strip()
+    verb = re.search(r"\b(?:type|write|enter|input)\b\s*:?\s*(.+)", instruction, re.IGNORECASE)
+    if verb:
+        return verb.group(1).strip().strip(".")
+    return None
 
 
 def _action_risk(step: ComputerUsePlanStep) -> RiskAssessment:

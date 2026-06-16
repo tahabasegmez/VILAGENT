@@ -109,7 +109,7 @@ class WindowsUIAActionProvider:
     async def _type_text(self, action: ActionCommand) -> NativeActionResult:
         try:
             from pywinauto import keyboard
-            keyboard.send_keys(str(action.args.get("text", "")), with_spaces=True)
+            keyboard.send_keys(_escape_send_keys(str(action.args.get("text", ""))), with_spaces=True)
             return NativeActionResult(succeeded=True)
         except Exception as e:
             return NativeActionResult(succeeded=False, error_code="type_text_failed", error_message=str(e))
@@ -221,6 +221,26 @@ def _flatten_hotkey_tokens(raw_keys: Any) -> list[str]:
         if trailing_plus:
             tokens.append("+")
     return tokens
+
+
+def _escape_send_keys(text: str) -> str:
+    """Escape pywinauto send_keys control characters so text is typed literally.
+
+    pywinauto treats ``^ + % ~ ( ) { } [ ]`` as syntax (modifiers, grouping), so
+    ``12+23=`` would otherwise read ``+`` as Shift and mistype. Wrapping each
+    special character in braces types it verbatim.
+    """
+    out: list[str] = []
+    for ch in text:
+        if ch == "{":
+            out.append("{{}")
+        elif ch == "}":
+            out.append("{}}")
+        elif ch in "^+%~()[]":
+            out.append("{" + ch + "}")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def _pywinauto_hotkey(raw_keys: Any) -> str:
