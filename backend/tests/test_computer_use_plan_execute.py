@@ -440,6 +440,41 @@ async def test_recovery_supervisor_is_consulted_when_vision_is_stuck(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_stuck_model_gets_generic_nudge_when_supervisor_unavailable(monkeypatch):
+    """When the model is stuck and the supervisor is off/rate-limited, a generic
+    self-correction nudge is injected so the step can recover instead of failing."""
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _vision_config())
+    monkeypatch.setattr("vilagent.computer_use.plan_execute._detect_served_model_name_once", _fake_detect)
+
+    class _StuckUntilNudged:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        async def get_next_action(self, instruction, image_base64, chat_history, environment="native", max_actions=4, image_media_type="image/png"):
+            self.calls += 1
+            if any("repeated the same action" in str(m.get("content", "")) for m in chat_history):
+                return ActionCommand(action_id="x", session_id="", kind=ActionKind.browser_action, args={"action": "terminate", "status": "success"}), []
+            return (
+                ActionCommand(action_id="x", session_id="", kind=ActionKind.click, target=TargetRef(strategy=TargetStrategy.coordinate, selector={"point": [5, 5]}, bounds=Rect(x=5, y=5, width=1, height=1), confidence=1, observation_id="")),
+                [{"role": "assistant", "content": "clicking"}],
+            )
+
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.FaraVisionActionProvider", _StuckUntilNudged)
+
+    # max_actions=4 so the repeated-action guard fires before the budget is spent.
+    plan = ComputerUsePlan(goal="x", steps=[_step("s1", "click compose", requires_vision=True, max_actions=4)])
+    remote = _UncertainRemote()
+    result = await PlanExecuteComputerUseOrchestrator(
+        planner=FakePlanner(plan),
+        remote=remote,
+        auto_approve_risk_threshold=RiskLevel.critical,
+        vision_recovery=False,  # supervisor off -> generic nudge must still kick in
+    ).run("x", owner=_owner())
+
+    assert result.status == StepStatus.completed
+
+
+@pytest.mark.asyncio
 async def test_recovery_off_does_not_consult_supervisor(monkeypatch):
     """With recovery off (default), the supervisor model is never created/consulted."""
     monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _vision_config())

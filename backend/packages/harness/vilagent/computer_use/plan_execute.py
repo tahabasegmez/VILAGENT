@@ -225,6 +225,18 @@ _MAX_SUPERVISOR_CALLS = 2
 # do not consume the real-action budget for a step.
 _MAX_VISION_NOOPS = 3
 
+# Generic self-correction nudges given when the model is stuck and the recovery
+# supervisor is unavailable/disabled/rate-limited, before failing the step.
+_MAX_VISION_NUDGES = 2
+
+_GENERIC_STUCK_NUDGE = (
+    "You repeated the same action with no visible effect. The target may be in a "
+    "different place, the page may have changed, the element may be off-screen, or "
+    "the click missed. Re-examine the screenshot carefully and try a clearly DIFFERENT "
+    "location or a different action (scroll the target into view, or click a different "
+    "element); do not repeat the previous coordinates."
+)
+
 
 async def _detect_served_model_name(base_url: str | None, api_key: str | None, default_model: str) -> str:
     if not base_url:
@@ -524,6 +536,7 @@ class ComputerUseStepExecutor:
         repeated_signature: str | None = None
         repeated_count = 0
         supervisor_calls = 0
+        nudge_count = 0
         real_actions = 0
         max_attempts = max(1, min(max_actions, 6))
         if self._vision_recovery:
@@ -664,6 +677,7 @@ class ComputerUseStepExecutor:
                     repeated_signature = signature
                     repeated_count = 0
                 if repeated_count >= 2:
+                    advice = None
                     if self._vision_recovery and supervisor_calls < _MAX_SUPERVISOR_CALLS:
                         advice = await self._get_recovery_advice(
                             step=step,
@@ -673,20 +687,27 @@ class ComputerUseStepExecutor:
                             on_activity_update=on_activity_update,
                         )
                         supervisor_calls += 1
+                    if advice is None and nudge_count < _MAX_VISION_NUDGES:
+                        # Supervisor disabled, rate-limited (e.g. GLM-V 429), or
+                        # unhelpful: still self-correct once before giving up.
+                        nudge_count += 1
+                        advice = _GENERIC_STUCK_NUDGE
+                        if on_activity_update:
+                            on_activity_update("vision_executor", "Stuck; nudging the model to try a different approach.", thought)
+                    if advice:
                         repeated_signature = None
                         repeated_count = 0
-                        if advice:
-                            chat_history.append({
-                                "role": "user",
-                                "content": (
-                                    "<supervisor>\n"
-                                    f"{advice}\n"
-                                    "</supervisor>\n"
-                                    "Your previous approach was not progressing. Do exactly this recovery "
-                                    "instruction now, then continue the original step."
-                                ),
-                            })
-                            continue
+                        chat_history.append({
+                            "role": "user",
+                            "content": (
+                                "<supervisor>\n"
+                                f"{advice}\n"
+                                "</supervisor>\n"
+                                "Your previous approach was not progressing. Do exactly this now, "
+                                "then continue the original step."
+                            ),
+                        })
+                        continue
                     return session_id, StepExecutionResult(
                         step_id=step.step_id,
                         environment=step.environment,

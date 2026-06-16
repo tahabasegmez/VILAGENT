@@ -1420,6 +1420,9 @@ def _build_supervisor_factory(source: str, planner_model_name: str, config: AppC
                 api_key=sup.api_key,
                 temperature=0,
                 timeout=sup.timeout_seconds,
+                # Fail fast on rate limits (e.g. GLM-V 429) instead of hammering the
+                # endpoint with retries; the loop falls back to a generic nudge.
+                max_retries=0,
             )
     from vilagent.models import create_chat_model
 
