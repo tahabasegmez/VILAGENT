@@ -219,6 +219,10 @@ exactly: PROCEED. Do not explain. Output only the instruction or PROCEED."""
 
 _MAX_SUPERVISOR_CALLS = 2
 
+# Extra loop iterations allowed for non-mutating 'wait'/'mouse_move' actions so they
+# do not consume the real-action budget for a step.
+_MAX_VISION_NOOPS = 3
+
 
 async def _detect_served_model_name(base_url: str | None, api_key: str | None, default_model: str) -> str:
     if not base_url:
@@ -510,6 +514,7 @@ class ComputerUseStepExecutor:
         repeated_signature: str | None = None
         repeated_count = 0
         supervisor_calls = 0
+        real_actions = 0
         max_attempts = max(1, min(max_actions, 6))
         if self._vision_recovery:
             # Give the supervisor-guided retries room beyond the base action budget.
@@ -518,7 +523,7 @@ class ComputerUseStepExecutor:
         last_status = ActionLifecycleStatus.failed
         last_error_code: str | None = None
 
-        for index in range(max_attempts):
+        for index in range(max_attempts + _MAX_VISION_NOOPS):
             if cancel_check and await cancel_check():
                 return session_id, StepExecutionResult(
                     step_id=step.step_id,
@@ -558,7 +563,7 @@ class ComputerUseStepExecutor:
                     )
                 except Exception as e:
                     last_error_code = _exception_summary(e)
-                    if index + 1 < max_attempts:
+                    if real_actions < max_attempts:
                         if on_activity_update:
                             on_activity_update(
                                 "vision_executor",
@@ -621,6 +626,24 @@ class ComputerUseStepExecutor:
                         summary="Fara completed the step successfully",
                     )
 
+                # 'wait' and 'mouse_move' are not desktop mutations and have no
+                # native action kind, so the vision mapper routes them to
+                # browser_action — which is disabled outside a browser session and
+                # would otherwise fail the whole step with 'browser_action_disabled'
+                # (e.g. FARA waiting for an app to open). Handle them locally: sleep
+                # for wait, no-op for a standalone move, then re-observe and continue.
+                op = action.args.get("action")
+                if action.kind == ActionKind.browser_action and op in {"wait", "mouse_move"}:
+                    if op == "wait":
+                        try:
+                            wait_seconds = float(action.args.get("time") or 1.0)
+                        except (TypeError, ValueError):
+                            wait_seconds = 1.0
+                        await asyncio.sleep(max(0.0, min(wait_seconds, 3.0)))
+                    if on_activity_update:
+                        on_activity_update("vision_executor", f"Vision model requested '{op}'; re-observing.", thought)
+                    continue
+
                 # Loop guard: a vision model that keeps emitting the identical
                 # action without progressing is broken out of early (on top of the
                 # hard max_actions cap) so it cannot burn the whole step budget.
@@ -670,6 +693,8 @@ class ComputerUseStepExecutor:
                         update={"target": action.target.model_copy(update={"observation_id": obs.observation_id})}
                     )
 
+                # This is a real (mutating) action; only these consume the budget.
+                real_actions += 1
                 stored = await self._remote.submit_action(action, owner)
                 if stored.status == ActionLifecycleStatus.awaiting_approval:
                     if on_activity_update:
@@ -711,7 +736,7 @@ class ComputerUseStepExecutor:
 
                 if last_status == ActionLifecycleStatus.uncertain:
                     last_error_code = outcome.error.code if outcome.error is not None else "postcondition_failed"
-                    if index + 1 >= max_attempts:
+                    if real_actions >= max_attempts:
                         return session_id, StepExecutionResult(
                             step_id=step.step_id,
                             environment=step.environment,
@@ -763,7 +788,7 @@ class ComputerUseStepExecutor:
                     and outcome.error.code in {"desktop_changed_before_mutation", "stale_target"}
                 ):
                     last_error_code = outcome.error.code
-                    if index + 1 >= max_attempts:
+                    if real_actions >= max_attempts:
                         return session_id, StepExecutionResult(
                             step_id=step.step_id,
                             environment=step.environment,

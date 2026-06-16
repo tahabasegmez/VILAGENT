@@ -312,6 +312,44 @@ async def test_vision_provider_selection_is_authoritative_over_config(monkeypatc
     assert used == ["ui_tars"]
 
 
+@pytest.mark.asyncio
+async def test_vision_wait_and_mouse_move_handled_locally_not_as_browser_action(monkeypatch):
+    """'wait' / 'mouse_move' must not be submitted as browser_action (which is
+    disabled in native Windows and fails with browser_action_disabled). They are
+    handled locally and do not consume the real-action budget."""
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _vision_config())
+    monkeypatch.setattr("vilagent.computer_use.plan_execute._detect_served_model_name_once", _fake_detect)
+
+    class _WaitMoveThenClick:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        async def get_next_action(self, instruction, image_base64, chat_history, environment="native", max_actions=4, image_media_type="image/png"):
+            self.calls += 1
+            if self.calls == 1:
+                return ActionCommand(action_id="x", session_id="", kind=ActionKind.browser_action, args={"action": "wait", "time": 0.01}), [{"role": "assistant", "content": "waiting"}]
+            if self.calls == 2:
+                return ActionCommand(action_id="x", session_id="", kind=ActionKind.browser_action, args={"action": "mouse_move", "coordinate": [5, 5]}), [{"role": "assistant", "content": "moving"}]
+            return (
+                ActionCommand(action_id="x", session_id="", kind=ActionKind.click, target=TargetRef(strategy=TargetStrategy.coordinate, selector={"point": [10, 20]}, bounds=Rect(x=10, y=20, width=1, height=1), confidence=1, observation_id="")),
+                [{"role": "assistant", "content": "clicking"}],
+            )
+
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.FaraVisionActionProvider", _WaitMoveThenClick)
+
+    plan = ComputerUsePlan(goal="calc", steps=[_step("s1", "press 1", requires_vision=True)])
+    remote = FakeRemote()
+    result = await PlanExecuteComputerUseOrchestrator(
+        planner=FakePlanner(plan),
+        remote=remote,
+        auto_approve_risk_threshold=RiskLevel.critical,
+    ).run("calc", owner=_owner())
+
+    assert result.status == StepStatus.completed
+    assert all(a.kind != ActionKind.browser_action for a in remote.step_actions)  # wait/move never submitted
+    assert any(a.kind == ActionKind.click for a in remote.step_actions)  # the real click ran
+
+
 class _UncertainRemote(FakeRemote):
     """Every executed action comes back uncertain, simulating a stuck vision step."""
 
