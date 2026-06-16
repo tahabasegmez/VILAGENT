@@ -1030,6 +1030,10 @@ class PlanExecuteComputerUseOrchestrator:
                     break
                 if on_plan_update:
                     on_plan_update(plan, results, step.step_id)
+                # Brief settle between steps so the UI from the previous step has
+                # finished rendering before the next step observes/acts.
+                if results:
+                    await asyncio.sleep(0.5)
                 current_session_id, result = await self._executor.execute(
                     step,
                     owner=owner,
