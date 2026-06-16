@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import locale
+import logging
 import os
 import uuid
 import json
@@ -324,6 +325,11 @@ class ComputerUseStepExecutor:
             )
             advice = _message_text(response).strip()
         except Exception:
+            logging.getLogger(__name__).warning(
+                "Recovery supervisor call failed; check the supervisor model supports vision "
+                "(text-only models reject screenshots). Skipping advice this step.",
+                exc_info=True,
+            )
             return None
         if not advice or advice.strip().upper().startswith("PROCEED"):
             return None

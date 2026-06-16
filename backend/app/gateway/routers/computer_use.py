@@ -390,7 +390,7 @@ async def _run_plan_execute_task(
         # vision+reasoning model. Source is operator-selected: the current planner
         # model, or a dedicated env-configured GLM-V (Zhipu) endpoint.
         vision_recovery = bool(_get_vilagent_state_value("vision_recovery", False))
-        supervisor_source = _get_vilagent_state_value("supervisor_source", "planner")
+        supervisor_source = _active_supervisor_source(config)
         supervisor_factory = _build_supervisor_factory(supervisor_source, model_name, config) if vision_recovery else None
 
         try:
@@ -596,7 +596,7 @@ class SupervisorSourceUpdateRequest(BaseModel):
 def _supervisor_source_response(config: AppConfig) -> SupervisorSourceResponse:
     sup = config.computer_use.supervisor_model
     return SupervisorSourceResponse(
-        source=str(_get_vilagent_state_value("supervisor_source", "planner")),
+        source=_active_supervisor_source(config),
         api_configured=sup.configured,
         api_model_name=sup.model_name if sup.configured else None,
     )
@@ -1390,6 +1390,17 @@ def _text_model_selection_response(config: AppConfig) -> TextModelSelectionRespo
             base_url=os.getenv("VILAGENT_FARA_BASE_URL", "http://localhost:5000/v1"),
         ),
     )
+
+
+def _active_supervisor_source(config: AppConfig) -> str:
+    """Resolve the supervisor model source.
+
+    When a dedicated GLM-V supervisor is configured in env, default to "api" so it
+    is actually used (configuring it implies wanting it); otherwise default to the
+    selected planner model. The operator UI can still override either way.
+    """
+    default = "api" if config.computer_use.supervisor_model.configured else "planner"
+    return str(_get_vilagent_state_value("supervisor_source", default))
 
 
 def _build_supervisor_factory(source: str, planner_model_name: str, config: AppConfig):
