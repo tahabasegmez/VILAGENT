@@ -175,6 +175,7 @@ class WindowsAgentHost:
             allowed_actions=config.host_safety.allowed_actions,
             desktop_safety=self.desktop_safety,
             control_heartbeat=self.ipc_heartbeat if config.enabled else None,
+            unrestricted=config.unrestricted,
         )
         self.action_service = ComputerUseActionService(
             action_store=self.action_store,

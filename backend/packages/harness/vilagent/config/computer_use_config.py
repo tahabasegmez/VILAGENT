@@ -168,6 +168,10 @@ class ComputerUseConfig(BaseModel):
     """
 
     enabled: bool = False
+    # Operator-owned single-machine automation: run without HITL/security gates by
+    # default (auto-approve every action incl. the plan, allow all browser domains,
+    # do not fail-closed on desktop-safety). Set false to restore approvals/guards.
+    unrestricted: bool = True
     agent_mode: Literal["vilagent", "vilagent_legacy"] = "vilagent"
     architecture: Literal["react_graph", "plan_execute"] = "plan_execute"
     planner_model: str | None = None

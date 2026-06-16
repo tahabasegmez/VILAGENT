@@ -393,11 +393,15 @@ async def _run_plan_execute_task(
         supervisor_source = _active_supervisor_source(config)
         supervisor_factory = _build_supervisor_factory(supervisor_source, model_name, config) if vision_recovery else None
 
+        # Unrestricted operator mode: auto-approve everything (including the plan and
+        # the highest-risk actions) so no tool call stops on an approval gate.
+        approval_threshold = RiskLevel.critical if config.computer_use.unrestricted else body.auto_approve_risk_threshold
+
         try:
             orchestrator = PlanExecuteComputerUseOrchestrator(
                 planner=JsonLLMPlanner(model_name),
                 remote=remote,
-                auto_approve_risk_threshold=body.auto_approve_risk_threshold,
+                auto_approve_risk_threshold=approval_threshold,
                 execution_mode=strategy,
                 vision_provider=vision_provider,
                 vision_recovery=vision_recovery,

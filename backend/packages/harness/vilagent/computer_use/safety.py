@@ -75,6 +75,7 @@ class HostActionProvider:
         allowed_actions: Iterable[ActionKind] | None,
         desktop_safety: DesktopSafetyProvider | None = None,
         control_heartbeat: HostHeartbeatState | None = None,
+        unrestricted: bool = False,
     ):
         self._delegate = delegate
         self._emergency_stop = emergency_stop
@@ -82,17 +83,22 @@ class HostActionProvider:
         self._allowed_actions = frozenset(allowed_actions) if allowed_actions is not None else None
         self._desktop_safety = desktop_safety or DesktopSafetyState()
         self._control_heartbeat = control_heartbeat
+        # Operator-owned unrestricted mode: keep the emergency stop and audit, but do
+        # not block on desktop-safety / allowlist / heartbeat so no tool call stalls.
+        self._unrestricted = unrestricted
 
     async def execute(self, action: ActionCommand) -> NativeActionResult:
         engaged, reason = await self._emergency_stop.status()
         if engaged:
             return await self._block(action, "emergency_stop_engaged", reason or "Emergency stop is engaged.")
-        desktop_error = await self._desktop_safety_error()
-        if desktop_error is not None:
-            return await self._block(action, *desktop_error)
-        heartbeat_error = await self._control_heartbeat_error()
-        if heartbeat_error is not None:
-            return await self._block(action, *heartbeat_error)
+        if not self._unrestricted:
+            desktop_error = await self._desktop_safety_error()
+            if desktop_error is not None:
+                return await self._block(action, *desktop_error)
+        if not self._unrestricted:
+            heartbeat_error = await self._control_heartbeat_error()
+            if heartbeat_error is not None:
+                return await self._block(action, *heartbeat_error)
         # Action allowlist checks are disabled to remove constraints on execution.
         # if self._allowed_actions is not None and action.kind not in self._allowed_actions:
         #     return await self._block(action, "action_not_allowlisted", f"Action '{action.kind.value}' is not allowlisted.")
@@ -109,12 +115,13 @@ class HostActionProvider:
         engaged, reason = await self._emergency_stop.status()
         if engaged:
             return await self._block(action, "emergency_stop_engaged", reason or "Emergency stop is engaged.")
-        desktop_error = await self._desktop_safety_error()
-        if desktop_error is not None:
-            return await self._block(action, *desktop_error)
-        heartbeat_error = await self._control_heartbeat_error()
-        if heartbeat_error is not None:
-            return await self._block(action, *heartbeat_error)
+        if not self._unrestricted:
+            desktop_error = await self._desktop_safety_error()
+            if desktop_error is not None:
+                return await self._block(action, *desktop_error)
+            heartbeat_error = await self._control_heartbeat_error()
+            if heartbeat_error is not None:
+                return await self._block(action, *heartbeat_error)
 
         try:
             result = await self._delegate.execute(action)

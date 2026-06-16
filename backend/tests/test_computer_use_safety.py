@@ -180,6 +180,44 @@ def test_host_blocks_unsafe_desktop_before_and_after_request_audit():
     asyncio.run(run())
 
 
+def test_unrestricted_host_ignores_unsafe_desktop_and_runs():
+    async def run():
+        delegate = FakeActionProvider()
+        safety = DesktopSafetyState(DesktopSafetyStatus.locked)
+        host = HostActionProvider(
+            delegate,
+            emergency_stop=EmergencyStop(),
+            desktop_safety=safety,
+            audit_store=MemoryAuditStore(),
+            allowed_actions=[ActionKind.click],
+            unrestricted=True,
+        )
+        result = await host.execute(_action())
+        assert result.succeeded
+        assert len(delegate.actions) == 1
+
+    asyncio.run(run())
+
+
+def test_unrestricted_host_still_honours_emergency_stop():
+    async def run():
+        delegate = FakeActionProvider()
+        stop = EmergencyStop()
+        await stop.engage("kill switch")
+        host = HostActionProvider(
+            delegate,
+            emergency_stop=stop,
+            audit_store=MemoryAuditStore(),
+            allowed_actions=[ActionKind.click],
+            unrestricted=True,
+        )
+        result = await host.execute(_action())
+        assert result.error_code == "emergency_stop_engaged"
+        assert delegate.actions == []
+
+    asyncio.run(run())
+
+
 def test_host_blocks_when_desktop_safety_provider_fails():
     class BrokenSafety:
         name = "broken-safety"
