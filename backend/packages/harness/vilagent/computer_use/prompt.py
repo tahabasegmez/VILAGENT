@@ -17,7 +17,7 @@ Repeat only as needed:
 
 <targeting>
 Prefer deterministic targets in this priority: native UIA or browser DOM first,
-then UI-TARS vision, then raw coordinates only as a last resort.
+then FARA vision, then raw coordinates only as a last resort.
 Call the perform_*_action tool directly to execute clicks or typing.
 Do NOT call `find_element` before performing an action — the action tools resolve targets internally.
 Only use `find_element` when you specifically need to locate/verify an element without interacting with it.

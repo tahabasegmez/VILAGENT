@@ -27,8 +27,6 @@ import type {
   TargetResolutionResult,
   TextModelSelection,
   TextModelSelectionUpdate,
-  VisionModelSelection,
-  VisionModelSelectionUpdate,
   VisionProviderHealth,
   VisionRecoverySelection,
   SupervisorSource,
@@ -131,19 +129,6 @@ export async function updateTextModelSelection(
 
 export async function getVisionHealth(): Promise<VisionProviderHealth> {
   return requestJson<VisionProviderHealth>("/vision/health");
-}
-
-export async function getVisionModelSelection(): Promise<VisionModelSelection> {
-  return requestJson<VisionModelSelection>("/vision/selection");
-}
-
-export async function updateVisionModelSelection(
-  request: VisionModelSelectionUpdate,
-): Promise<VisionModelSelection> {
-  return requestJson<VisionModelSelection>("/vision/selection", {
-    method: "POST",
-    body: request,
-  });
 }
 
 export async function runComputerUseTask(

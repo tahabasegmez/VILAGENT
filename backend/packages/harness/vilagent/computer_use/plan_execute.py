@@ -49,7 +49,6 @@ from vilagent.models import create_chat_model
 from vilagent.config.app_config import get_app_config
 from vilagent.computer_use.fara import FaraVisionActionProvider
 from vilagent.computer_use.image_ops import encode_image_for_vision, scale_point
-from vilagent.computer_use.uitars import UiTarsVisionActionProvider
 from vilagent.config.computer_use_config import ComputerUseFaraModelConfig
 
 
@@ -197,7 +196,7 @@ Rules:
 - environment: 'native' Windows UI or 'browser'.
 - requires_vision: false only when the command has an unambiguous keyboard / UIA / DOM equivalent (keyboard, text-entry, UIA, or DOM equivalent); true when visual understanding of the screen is needed. Prefer deterministic input steps over visual actions. Prefer deterministic over visual.
 - To enter text, numbers, or a calculation, use ONE type_text step: action_kind="type_text", requires_vision=false, and put the exact literal string (with symbols like + - * / =) in args.text. The keyboard types it directly into the focused field; NEVER spell it out by visually clicking on-screen keys or buttons. Add a separate step to focus the field first only if it is not already focused.
-- To open an app, use ONE launch_app step (action_kind="launch_app", requires_vision=false) and set args.app_name to the app's Windows EXECUTABLE name (you know these: Edge=msedge, Chrome=chrome, Word=winword, Excel=excel, Notepad=notepad, Calculator=calc, ...). Give a single launchable name, NEVER a sentence, URL, or goal. The runtime launches the executable (also via App Paths / Start search), so a correct exe name is the most reliable. Launching and navigating are ALWAYS separate steps.
+- To open an app, use ONE launch_app step (action_kind="launch_app", requires_vision=false) and set args.app_name to the app's Windows EXECUTABLE name (the short command you would type in the Run dialog). Give a single launchable name, NEVER a sentence, URL, or goal. The runtime launches the executable (also via App Paths / Start search), so a correct exe name is the most reliable. Launching and navigating are ALWAYS separate steps.
 - To open a web page, use a separate browser_action step AFTER the browser is open: action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL. Do not bundle "launch browser and go to X" into one step.
 - Plan the TRANSITIONS between steps, not only the actions. Spell it out simply: after one step finishes, the cursor/focus is somewhere; to do the next thing you must FIRST move focus there. Never assume the cursor is already in the right place, and never rely on the vision model to find and click each field. So whenever two consecutive steps touch different fields, controls, or regions, add an explicit deterministic step that moves focus first — a hotkey step (action_kind="hotkey", requires_vision=false, e.g. args.keys="TAB" for the next field, "ENTER" to confirm, or arrow keys) or a focus/click step — BEFORE the next action. Short examples (not one specific app):
     Email: type the recipient -> hotkey ENTER (commit the address / pick the highlighted suggestion) -> hotkey TAB (move to Subject) -> type Subject -> hotkey TAB (move to Body) -> type Body -> click Send.
@@ -219,7 +218,7 @@ Rules:
 
 # The recovery supervisor is a stronger vision+reasoning model (the selected
 # planner model, e.g. a cloud Qwen3-VL). It is only called when the fast action
-# model (FARA/UI-TARS) is stuck, so keep this prompt short and decisive.
+# model (FARA) is stuck, so keep this prompt short and decisive.
 _SUPERVISOR_PROMPT = """\
 You supervise a fast GUI action model that got stuck on ONE step. Look at the
 screenshot and reason about what is actually blocking progress (a popup, ad,
@@ -302,9 +301,8 @@ class ComputerUseStepExecutor:
         supervisor_model_factory: Callable[[], Any] | None = None,
     ):
         self._remote = remote
-        # The vision provider selection ("fara" | "ui_tars") is supplied by the
-        # operator UI (persisted state) and is authoritative; config is only a
-        # bootstrap default when the UI has not selected one yet.
+        # FARA is the only vision provider; this field is retained for signature
+        # compatibility with the orchestrator/router but is always FARA.
         self._vision_provider = vision_provider
         # Optional recovery supervisor: when on, a stronger reasoning model is
         # consulted only when the fast vision model is stuck. The factory builds the
@@ -315,7 +313,7 @@ class ComputerUseStepExecutor:
         self._detected_vision_models: dict[tuple[str | None, str | None, str], str] = {}
 
     def _selected_vision_provider(self, config) -> str:
-        return self._vision_provider or config.computer_use.vision_provider
+        return "fara"
 
     async def _get_recovery_advice(
         self,
@@ -383,16 +381,15 @@ class ComputerUseStepExecutor:
             # and must never be done by visually clicking on-screen keys (which is
             # unreliable and lets the vision model falsely 'finish' after one click).
             if step.requires_vision and action_kind not in {ActionKind.launch_app, ActionKind.hotkey, ActionKind.type_text}:
-                if self._selected_vision_provider(config) in ("fara", "ui_tars"):
-                    return await self._execute_fara_vision_loop(
-                        step,
-                        owner=owner,
-                        session_id=resolved_session_id,
-                        auto_approve_risk_threshold=auto_approve_risk_threshold,
-                        max_actions=_vision_action_limit(step, config.computer_use.budgets.vision_calls),
-                        on_activity_update=on_activity_update,
-                        cancel_check=cancel_check,
-                    )
+                return await self._execute_fara_vision_loop(
+                    step,
+                    owner=owner,
+                    session_id=resolved_session_id,
+                    auto_approve_risk_threshold=auto_approve_risk_threshold,
+                    max_actions=_vision_action_limit(step, config.computer_use.budgets.vision_calls),
+                    on_activity_update=on_activity_update,
+                    cancel_check=cancel_check,
+                )
 
             if on_activity_update:
                 on_activity_update("uia_executor", f"Resolving target for: {step.instruction}", None)
@@ -483,33 +480,11 @@ class ComputerUseStepExecutor:
         if on_activity_update:
             on_activity_update("vision_executor", f"Running vision step: {step.instruction}", None)
         
-        # 1. Resolve tunnel URL to bind both providers to the active Ngrok tunnel
-        tunnel_url = None
-        if config.computer_use.vision_uitars_model.pyngrok_url:
-            tunnel_url = config.computer_use.vision_uitars_model.pyngrok_url.rstrip("/")
-        elif config.computer_use.vision_fara_model.base_url:
-            fara_base = config.computer_use.vision_fara_model.base_url.rstrip("/")
-            if "localhost" not in fara_base and "127.0.0.1" not in fara_base:
-                tunnel_url = fara_base
-                if tunnel_url.endswith("/v1"):
-                    tunnel_url = tunnel_url[:-3]
-
-        if tunnel_url:
-            base_url = f"{tunnel_url}/v1"
-        else:
-            base_url = config.computer_use.vision_fara_model.base_url
-
-        # 2. Resolve API key
-        if self._selected_vision_provider(config) == "ui_tars":
-            api_key = config.computer_use.vision_uitars_model.api_key or "not-needed"
-        else:
-            api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
-
-        # 3. Resolve default model name
-        if self._selected_vision_provider(config) == "ui_tars":
-            default_model = config.computer_use.vision_uitars_model.model_name
-        else:
-            default_model = config.computer_use.vision_fara_model.model_name
+        # Resolve the FARA endpoint. A remote (ngrok / Colab vLLM) base_url is used
+        # as-is; a local base_url is left untouched too. coordinates map 1:1.
+        base_url = config.computer_use.vision_fara_model.base_url
+        api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
+        default_model = config.computer_use.vision_fara_model.model_name
 
         try:
             detected_model = await _detect_served_model_name_once(
@@ -528,22 +503,14 @@ class ComputerUseStepExecutor:
                 summary=f"Vision model unreachable: {_exception_summary(e)}",
             )
 
-        if self._selected_vision_provider(config) == "ui_tars":
-            provider: Any = UiTarsVisionActionProvider(
-                config.computer_use.vision_uitars_model,
-                base_url=base_url,
-                api_key=api_key,
-                model_name=detected_model,
-            )
-        else:
-            fara_config = ComputerUseFaraModelConfig(
-                enabled=True,
-                model_name=detected_model,
-                base_url=base_url,
-                api_key=api_key,
-                timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
-            )
-            provider = FaraVisionActionProvider(fara_config)
+        fara_config = ComputerUseFaraModelConfig(
+            enabled=True,
+            model_name=detected_model,
+            base_url=base_url,
+            api_key=api_key,
+            timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
+        )
+        provider: Any = FaraVisionActionProvider(fara_config)
         chat_history: list[dict[str, Any]] = []
         repeated_signature: str | None = None
         repeated_count = 0
@@ -557,6 +524,7 @@ class ComputerUseStepExecutor:
         last_action_id = ""
         last_status = ActionLifecycleStatus.failed
         last_error_code: str | None = None
+        model_calls = 0
 
         for index in range(max_attempts + _MAX_VISION_NOOPS):
             if cancel_check and await cancel_check():
@@ -583,11 +551,12 @@ class ComputerUseStepExecutor:
                 # cost); coordinates are mapped back to screen pixels via coord_scale.
                 image_base64, image_media_type, coord_scale = encode_image_for_vision(
                     image_bytes,
-                    max_dim=config.computer_use.vision_max_image_dimension,
-                    jpeg_quality=config.computer_use.vision_jpeg_quality,
+                    max_dim=getattr(config.computer_use, "vision_max_image_dimension", 0),
+                    jpeg_quality=getattr(config.computer_use, "vision_jpeg_quality", 85),
                 )
 
                 try:
+                    model_calls += 1
                     action, new_history = await provider.get_next_action(
                         instruction=_vision_step_command(step, max_actions=max_attempts),
                         image_base64=image_base64,
@@ -598,7 +567,7 @@ class ComputerUseStepExecutor:
                     )
                 except Exception as e:
                     last_error_code = _exception_summary(e)
-                    if real_actions < max_attempts:
+                    if model_calls < max_attempts:
                         if on_activity_update:
                             on_activity_update(
                                 "vision_executor",

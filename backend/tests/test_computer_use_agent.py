@@ -30,7 +30,7 @@ class TestCUPrompt:
         assert "<safety>" in prompt
         assert "UIA" in prompt
         assert "browser DOM" in prompt
-        assert "UI-TARS vision" in prompt
+        assert "FARA vision" in prompt
         assert "Do not plan before every click" in prompt
 
     def test_system_prompt_hotkey_injection(self):

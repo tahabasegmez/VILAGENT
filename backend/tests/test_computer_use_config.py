@@ -21,11 +21,6 @@ def test_computer_use_is_disabled_by_default(monkeypatch):
         "VILAGENT_FARA_MODEL_NAME",
         "VILAGENT_FARA_BASE_URL",
         "VILAGENT_FARA_API_KEY",
-        "VILAGENT_UITARS_ENABLED",
-        "VILAGENT_UITARS_MODEL_NAME",
-        "VILAGENT_UITARS_PYNGROK_URL",
-        "VILAGENT_UITARS_API_KEY",
-        "VILAGENT_UITARS_ENDPOINT_PATH",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -40,10 +35,7 @@ def test_computer_use_is_disabled_by_default(monkeypatch):
     assert config.vision_provider == "fara"
     assert config.vision_fara_model.enabled is False
     assert config.vision_fara_model.model_name == "microsoft/Fara-7B"
-    assert config.vision_model.provider == "pyngrok"
-    assert config.vision_model.enabled is False
-    assert config.vision_model.model_name == "UI-TARS-1.5-7B"
-    assert config.vision_model.endpoint_path == "/resolve"
+    assert not hasattr(config, "vision_uitars_model")
     assert config.prompt_profile == "compact"
     assert config.platform == "windows"
     assert config.runtime_mode == "dedicated_process"
@@ -65,19 +57,17 @@ def test_computer_use_is_disabled_by_default(monkeypatch):
 
 
 def test_vilagent_optional_env_refs_have_startup_safe_defaults(monkeypatch):
-    monkeypatch.delenv("VILAGENT_UITARS_ENABLED", raising=False)
-    monkeypatch.delenv("VILAGENT_UITARS_PYNGROK_URL", raising=False)
     monkeypatch.delenv("VILAGENT_FARA_ENABLED", raising=False)
+    monkeypatch.delenv("VILAGENT_FARA_API_KEY", raising=False)
     monkeypatch.delenv("REQUIRED_EXTERNAL_KEY", raising=False)
 
     resolved = AppConfig.resolve_env_variables(
         {
-            "enabled": "$VILAGENT_UITARS_ENABLED",
-            "pyngrok_url": "$VILAGENT_UITARS_PYNGROK_URL",
             "fara_enabled": "$VILAGENT_FARA_ENABLED",
+            "fara_api_key": "$VILAGENT_FARA_API_KEY",
         }
     )
 
-    assert resolved == {"enabled": "false", "pyngrok_url": None, "fara_enabled": "false"}
+    assert resolved == {"fara_enabled": "false", "fara_api_key": "not-needed"}
     with pytest.raises(ValueError, match="REQUIRED_EXTERNAL_KEY"):
         AppConfig.resolve_env_variables("$REQUIRED_EXTERNAL_KEY")

@@ -75,34 +75,6 @@ class ComputerUseTextModelConfig(BaseModel):
         return self
 
 
-class ComputerUseVisionModelConfig(BaseModel):
-    """Vision target resolution model endpoint."""
-
-    provider: Literal["pyngrok"] = "pyngrok"
-    enabled: bool = Field(default_factory=lambda: _env_bool("VILAGENT_UITARS_ENABLED", False))
-    model_name: str = Field(default_factory=lambda: os.getenv("VILAGENT_UITARS_MODEL_NAME", "UI-TARS-1.5-7B"))
-    pyngrok_url: str | None = Field(default_factory=lambda: os.getenv("VILAGENT_UITARS_PYNGROK_URL"))
-    api_key: str | None = Field(default_factory=lambda: os.getenv("VILAGENT_UITARS_API_KEY"))
-    endpoint_path: str = Field(default_factory=lambda: os.getenv("VILAGENT_UITARS_ENDPOINT_PATH", "/resolve"))
-    health_endpoint_path: str = Field(default_factory=lambda: os.getenv("VILAGENT_UITARS_HEALTH_ENDPOINT_PATH", "/health"))
-    timeout_seconds: float = Field(default=120, gt=0, le=600)
-
-    @model_validator(mode="after")
-    def apply_env_overrides(self) -> "ComputerUseVisionModelConfig":
-        if os.getenv("VILAGENT_UITARS_ENABLED") is not None:
-            self.enabled = _env_bool("VILAGENT_UITARS_ENABLED", self.enabled)
-        if value := os.getenv("VILAGENT_UITARS_MODEL_NAME"):
-            self.model_name = value
-        if value := os.getenv("VILAGENT_UITARS_PYNGROK_URL"):
-            self.pyngrok_url = value
-        if value := os.getenv("VILAGENT_UITARS_API_KEY"):
-            self.api_key = value
-        if value := os.getenv("VILAGENT_UITARS_ENDPOINT_PATH"):
-            self.endpoint_path = value
-        if value := os.getenv("VILAGENT_UITARS_HEALTH_ENDPOINT_PATH"):
-            self.health_endpoint_path = value
-        return self
-
 class ComputerUseFaraModelConfig(BaseModel):
     """Vision action model endpoint used for end-to-end plan execution."""
 
@@ -176,9 +148,10 @@ class ComputerUseConfig(BaseModel):
     architecture: Literal["react_graph", "plan_execute"] = "plan_execute"
     planner_model: str | None = None
     text_model: ComputerUseTextModelConfig = Field(default_factory=ComputerUseTextModelConfig)
-    vision_provider: Literal["fara", "ui_tars"] = "fara"
+    # FARA is the sole vision action model. The browser path drives it through
+    # Playwright; the native path drives it through pywinauto/pyautogui.
+    vision_provider: Literal["fara"] = "fara"
     vision_fara_model: ComputerUseFaraModelConfig = Field(default_factory=ComputerUseFaraModelConfig)
-    vision_uitars_model: ComputerUseVisionModelConfig = Field(default_factory=ComputerUseVisionModelConfig)
     # Dedicated recovery-supervisor model (env-configured GLM-V); used when the
     # operator selects the "api" supervisor source.
     supervisor_model: ComputerUseSupervisorModelConfig = Field(default_factory=ComputerUseSupervisorModelConfig)
@@ -209,14 +182,9 @@ class ComputerUseConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_vision_model(cls, data):
-        if isinstance(data, dict) and "vision_model" in data and "vision_uitars_model" not in data:
-            data = dict(data)
-            data["vision_uitars_model"] = data.pop("vision_model")
-            data.setdefault("vision_provider", "ui_tars")
+    def drop_legacy_vision_model(cls, data):
+        # Legacy configs carried a UI-TARS ``vision_model``/``vision_uitars_model``
+        # block; FARA is now the only vision model, so silently drop them.
+        if isinstance(data, dict) and ("vision_model" in data or "vision_uitars_model" in data):
+            data = {k: v for k, v in data.items() if k not in {"vision_model", "vision_uitars_model"}}
         return data
-
-    @property
-    def vision_model(self) -> ComputerUseVisionModelConfig:
-        """Backward-compatible alias for the UI-TARS target resolver config."""
-        return self.vision_uitars_model

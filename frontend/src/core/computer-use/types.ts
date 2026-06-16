@@ -29,7 +29,7 @@ export type ComputerUseStatus = {
     endpoint_configured: boolean;
   };
   vision_model: {
-    provider: "fara" | "ui_tars" | string;
+    provider: "fara" | string;
     enabled: boolean;
     model_name: string;
     endpoint_configured: boolean;
@@ -109,17 +109,6 @@ export type ComputerUseTextModelHealth = {
   endpoint_kind: string;
   error_code?: string | null;
   details: Record<string, unknown>;
-};
-
-export type VisionModelProviderPreset = "fara" | "ui_tars";
-
-export type VisionModelSelection = {
-  provider: VisionModelProviderPreset;
-  options?: string[];
-};
-
-export type VisionModelSelectionUpdate = {
-  provider: VisionModelProviderPreset;
 };
 
 export type TextModelProviderPreset = "gemini" | "glm" | "ollama" | "fara";

@@ -262,9 +262,8 @@ class _FakeVisionProvider:
 
 def _vision_config():
     fara = type("Fara", (), {"base_url": "http://localhost:5000/v1", "api_key": "not-needed", "model_name": "fara", "timeout_seconds": 5})()
-    uitars = type("UiTars", (), {"pyngrok_url": None, "api_key": "not-needed", "model_name": "ui-tars", "timeout_seconds": 5})()
     budgets = type("Budgets", (), {"vision_calls": 3})()
-    cu = type("CU", (), {"vision_provider": "fara", "vision_fara_model": fara, "vision_uitars_model": uitars, "budgets": budgets, "vision_max_image_dimension": 1280, "vision_jpeg_quality": 85})()
+    cu = type("CU", (), {"vision_provider": "fara", "vision_fara_model": fara, "budgets": budgets, "vision_max_image_dimension": 1280, "vision_jpeg_quality": 85})()
     return type("AppConfig", (), {"computer_use": cu})()
 
 
@@ -305,27 +304,19 @@ async def _fake_detect(cache, base_url, api_key, default_model, *, detector=None
 
 
 @pytest.mark.asyncio
-async def test_vision_provider_selection_is_authoritative_over_config(monkeypatch):
-    """The UI-selected vision provider passed to the orchestrator wins over config.
-
-    config default is 'fara' (see ``_vision_config``); the operator UI selected
-    'ui_tars', so the UI-TARS provider must be the one constructed.
-    """
+async def test_fara_is_the_only_vision_provider_constructed(monkeypatch):
+    """FARA is the sole vision provider; the native vision loop always builds it."""
     used: list[str] = []
 
-    def _make_fake(label: str):
-        class _Fake:
-            def __init__(self, *args, **kwargs):
-                used.append(label)
+    class _Fake:
+        def __init__(self, *args, **kwargs):
+            used.append("fara")
 
-            async def get_next_action(self, instruction, image_base64, chat_history, environment="native", max_actions=4, image_media_type="image/png"):
-                return ActionCommand(action_id="x", session_id="", kind=ActionKind.browser_action, args={"action": "terminate", "status": "success"}), []
-
-        return _Fake
+        async def get_next_action(self, instruction, image_base64, chat_history, environment="native", max_actions=4, image_media_type="image/png"):
+            return ActionCommand(action_id="x", session_id="", kind=ActionKind.browser_action, args={"action": "terminate", "status": "success"}), []
 
     monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _vision_config())
-    monkeypatch.setattr("vilagent.computer_use.plan_execute.FaraVisionActionProvider", _make_fake("fara"))
-    monkeypatch.setattr("vilagent.computer_use.plan_execute.UiTarsVisionActionProvider", _make_fake("ui_tars"))
+    monkeypatch.setattr("vilagent.computer_use.plan_execute.FaraVisionActionProvider", _Fake)
     monkeypatch.setattr("vilagent.computer_use.plan_execute._detect_served_model_name_once", _fake_detect)
 
     plan = ComputerUsePlan(goal="x", steps=[_step("s1", "click the button", requires_vision=True)])
@@ -334,10 +325,9 @@ async def test_vision_provider_selection_is_authoritative_over_config(monkeypatc
         planner=FakePlanner(plan),
         remote=remote,
         auto_approve_risk_threshold=RiskLevel.critical,
-        vision_provider="ui_tars",
     ).run("x", owner=_owner())
 
-    assert used == ["ui_tars"]
+    assert used == ["fara"]
 
 
 @pytest.mark.asyncio

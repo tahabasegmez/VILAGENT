@@ -34,7 +34,6 @@ from vilagent.computer_use.providers import ActionProvider, ApprovalProvider, Au
 from vilagent.computer_use.safety import EmergencyStop, HostActionProvider
 from vilagent.computer_use.session import DesktopSessionService
 from vilagent.computer_use.target_resolver import TargetResolver
-from vilagent.computer_use.vision import UiTarsPyngrokTargetProvider
 from vilagent.computer_use.verification import ConservativeVerificationProvider, RoutedVerificationProvider
 from vilagent.computer_use.windows.action import WindowsUIAActionProvider, create_stable_uia_control_resolver
 from vilagent.computer_use.windows.bootstrap import create_browser_runtime, create_windows_session_service, create_windows_uia_provider
@@ -149,8 +148,6 @@ class WindowsAgentHost:
         elif config.browser.enabled and browser_dom_resolver is not None:
             target_providers.append(BrowserDOMTargetProvider(browser_dom_resolver, self._browser_policy))
         target_providers.append(WindowsUIATargetProvider(self.uia))
-        if config.vision_provider == "ui_tars" and config.vision_uitars_model.enabled:
-            target_providers.append(UiTarsPyngrokTargetProvider(config.vision_uitars_model))
         self.target_resolver = target_resolver or TargetResolver(target_providers)
         semantic = semantic_action_provider or WindowsUIAActionProvider(
             control_resolver=create_stable_uia_control_resolver(config.uia_comtypes_cache_dir)

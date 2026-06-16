@@ -49,7 +49,7 @@ from vilagent.computer_use.remote_host import (
     RemoteSessionNotFoundError,
     RemoteWindowsHostControl,
 )
-from vilagent.computer_use.vision import UiTarsPyngrokTargetProvider, VisionProviderHealth
+from vilagent.computer_use.vision import VisionProviderHealth
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/computer-use", tags=["computer-use"], dependencies=[Depends(require_internal_request)])
@@ -311,11 +311,11 @@ class TextModelSelectionUpdateRequest(BaseModel):
 
 class VisionModelSelectionResponse(BaseModel):
     provider: str
-    options: list[str] = Field(default_factory=lambda: ["fara", "ui_tars"])
+    options: list[str] = Field(default_factory=lambda: ["fara"])
 
 
 class VisionModelSelectionUpdateRequest(BaseModel):
-    provider: str = Field(pattern="^(fara|ui_tars)$")
+    provider: str = Field(pattern="^fara$")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -799,11 +799,7 @@ async def update_text_model_selection(body: TextModelSelectionUpdateRequest) -> 
     summary="Get selectable VILAGENT vision model presets",
 )
 async def get_vision_model_selection(config: AppConfig = Depends(get_config)) -> VisionModelSelectionResponse:
-    provider = _get_vilagent_state_value("vision_provider", config.computer_use.vision_provider)
-    return VisionModelSelectionResponse(
-        provider=provider,
-        options=["fara", "ui_tars"]
-    )
+    return VisionModelSelectionResponse(provider="fara", options=["fara"])
 
 
 @router.post(
@@ -812,28 +808,25 @@ async def get_vision_model_selection(config: AppConfig = Depends(get_config)) ->
     summary="Switch VILAGENT vision model preset and persist it to state file",
 )
 async def update_vision_model_selection(body: VisionModelSelectionUpdateRequest) -> VisionModelSelectionResponse:
-    _set_vilagent_state_value("vision_provider", body.provider)
-    config = reload_app_config()
-    return VisionModelSelectionResponse(
-        provider=body.provider,
-        options=["fara", "ui_tars"]
-    )
+    # FARA is the only vision model; the selection endpoint is kept for
+    # backward compatibility but always resolves to FARA.
+    _set_vilagent_state_value("vision_provider", "fara")
+    reload_app_config()
+    return VisionModelSelectionResponse(provider="fara", options=["fara"])
 
 
 @router.get("/vision/health", response_model=VisionProviderHealth, summary="Probe vision endpoint health")
 async def get_vision_health(config: AppConfig = Depends(get_config)) -> VisionProviderHealth:
-    if _active_vision_provider(config) == "fara":
-        fara = config.computer_use.vision_fara_model
-        return VisionProviderHealth(
-            provider_name="fara",
-            enabled=fara.enabled,
-            healthy=fara.enabled and bool(fara.base_url),
-            endpoint_configured=bool(fara.base_url),
-            model_name=fara.model_name,
-            error_code=None if fara.enabled and fara.base_url else "fara_endpoint_missing",
-            details={"endpoint_kind": "openai_compatible"},
-        )
-    return await UiTarsPyngrokTargetProvider(config.computer_use.vision_uitars_model).health()
+    fara = config.computer_use.vision_fara_model
+    return VisionProviderHealth(
+        provider_name="fara",
+        enabled=fara.enabled,
+        healthy=fara.enabled and bool(fara.base_url),
+        endpoint_configured=bool(fara.base_url),
+        model_name=fara.model_name,
+        error_code=None if fara.enabled and fara.base_url else "fara_endpoint_missing",
+        details={"endpoint_kind": "openai_compatible"},
+    )
 
 
 @router.get("/health", response_model=ComputerUseHostHealth, summary="Get computer-use host health")
@@ -1789,27 +1782,19 @@ def _validate_computer_use_config(config: AppConfig) -> list[ComputerUseConfigCh
 
 
 def _selected_vision_enabled(cu) -> bool:
-    if _get_vilagent_state_value("vision_provider", cu.vision_provider) == "fara":
-        return cu.vision_fara_model.enabled
-    return cu.vision_uitars_model.enabled
+    return cu.vision_fara_model.enabled
 
 
 def _selected_vision_model_name(cu) -> str:
-    if _get_vilagent_state_value("vision_provider", cu.vision_provider) == "fara":
-        return cu.vision_fara_model.model_name
-    return cu.vision_uitars_model.model_name
+    return cu.vision_fara_model.model_name
 
 
 def _selected_vision_endpoint_configured(cu) -> bool:
-    if _get_vilagent_state_value("vision_provider", cu.vision_provider) == "fara":
-        return bool(cu.vision_fara_model.base_url)
-    return bool(cu.vision_uitars_model.pyngrok_url)
+    return bool(cu.vision_fara_model.base_url)
 
 
 def _selected_vision_endpoint_path(cu) -> str:
-    if _get_vilagent_state_value("vision_provider", cu.vision_provider) == "fara":
-        return "/chat/completions"
-    return cu.vision_uitars_model.endpoint_path
+    return "/chat/completions"
 
 
 def _resolve_text_model_endpoint(config: AppConfig) -> str | None:

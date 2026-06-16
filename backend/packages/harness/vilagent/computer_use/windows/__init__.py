@@ -12,7 +12,6 @@ from vilagent.computer_use.windows.screen import WindowsScreenProvider
 from vilagent.computer_use.windows.target import WindowsUIATargetProvider
 from vilagent.computer_use.windows.uia import WindowsUIAProvider
 from vilagent.computer_use.windows.verification import WindowsUIAVerificationProvider
-from vilagent.computer_use.vision import UiTarsPyngrokTargetProvider
 
 __all__ = [
     "WindowsScreenProvider",
@@ -27,7 +26,6 @@ __all__ = [
     "RedactionUnavailableError",
     "WindowsUIAProvider",
     "WindowsUIATargetProvider",
-    "UiTarsPyngrokTargetProvider",
     "WindowsUIAVerificationProvider",
     "create_windows_session_service",
     "create_dedicated_windows_host_supervisor",

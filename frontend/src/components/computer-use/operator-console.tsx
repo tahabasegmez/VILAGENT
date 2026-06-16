@@ -12,16 +12,16 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   approveAction, canCancelAction, canExecuteAction, cancelAction,
   denyAction, executeAction,
-  getComputerUseStatus, getTextModelHealth, getVisionHealth,
+  getComputerUseStatus, getTextModelHealth,
   getAgentActivity, getTextModelSelection,
-  getVisionModelSelection, listPendingApprovals,
-  updateTextModelSelection, updateVisionModelSelection, 
+  listPendingApprovals,
+  updateTextModelSelection,
   updateExecutionModeSelection, getExecutionModeSelection,
   getVisionRecoverySelection, updateVisionRecoverySelection,
   getSupervisorSource, updateSupervisorSource,
   createOperatorTaskOwner, runComputerUseTask, summarizeApproval, useOperatorRuntimeState,
 } from "@/core/computer-use";
-import type { ActionOwner, AgentActivity, ComputerUseRiskLevel, ComputerUseStatus, TextModelSelection, VisionModelSelection, TextModelProviderPreset, VisionModelProviderPreset, SupervisorSource } from "@/core/computer-use";
+import type { ActionOwner, AgentActivity, ComputerUseRiskLevel, ComputerUseStatus, TextModelSelection, TextModelProviderPreset, SupervisorSource } from "@/core/computer-use";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = {
@@ -57,7 +57,6 @@ export function ComputerUseOperatorConsole() {
   const [baselineActivity, setBaselineActivity] = useState<AgentActivity | null>(null);
 
   const [textModelSelection, setTextModelSelection] = useState<TextModelSelection | null>(null);
-  const [visionModelSelection, setVisionModelSelection] = useState<VisionModelSelection | null>({ provider: "fara" });
 
   const [executionMode, setExecutionMode] = useState<ComputerUseStatus["execution_mode"] | null>(null);
   const [visionRecovery, setVisionRecovery] = useState<boolean | null>(null);
@@ -90,13 +89,6 @@ export function ComputerUseOperatorConsole() {
         setTextModelSelection(selection);
       } catch (err) {
         console.error("Failed to fetch text model selection:", err);
-      }
-
-      try {
-        const visionSelection = await getVisionModelSelection();
-        setVisionModelSelection(visionSelection);
-      } catch (err) {
-        console.error("Failed to fetch vision model selection:", err);
       }
 
       try {
@@ -266,15 +258,6 @@ export function ComputerUseOperatorConsole() {
       const nextText = await getTextModelHealth();
     });
   };
-
-  const handleSwitchVisionModel = (provider: VisionModelProviderPreset) => {
-    void run(`switch-vision-${provider}`, async () => {
-      const selection = await updateVisionModelSelection({ provider });
-      setVisionModelSelection(selection);
-      const nextVision = await getVisionHealth();
-    });
-  };
-
 
 
   const handleSwitchExecutionMode = (mode: ComputerUseStatus["execution_mode"]) => {
@@ -641,21 +624,6 @@ export function ComputerUseOperatorConsole() {
                     <ModeButton active={executionMode === "vision_only"} onClick={() => handleSwitchExecutionMode("vision_only")}>
                       Vision-Only
                     </ModeButton>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Vision Model</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(visionModelSelection?.options || ["fara", "ui_tars"]).map((provider) => (
-                      <ModeButton
-                        key={provider}
-                        active={visionModelSelection?.provider === provider}
-                        onClick={() => handleSwitchVisionModel(provider as VisionModelProviderPreset)}
-                      >
-                        {provider.toUpperCase()}
-                      </ModeButton>
-                    ))}
                   </div>
                 </div>
 

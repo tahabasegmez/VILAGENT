@@ -74,3 +74,6 @@ backend/database.sqlite
 # orphaned legacy data dir (pre-rebrand)
 .deer-flow/
 backend/.deer-flow/
+
+# Local FARA reference repo (study material, not part of VILAGENT)
+/fara-main/
