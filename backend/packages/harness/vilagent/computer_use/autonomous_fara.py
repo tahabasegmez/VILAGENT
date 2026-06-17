@@ -33,7 +33,11 @@ from vilagent.computer_use.models import (
     RiskLevel,
 )
 from vilagent.computer_use.fara import FaraVisionActionProvider
-from vilagent.computer_use.browser_playwright import PlaywrightBrowserSession, PlaywrightUnavailableError
+from vilagent.computer_use.browser_playwright import (
+    PlaywrightBrowserSession,
+    PlaywrightUnavailableError,
+    get_shared_browser_session,
+)
 from vilagent.computer_use.image_ops import encode_image_for_vision
 from vilagent.computer_use.remote_host import RemoteSessionNotFoundError, RemoteWindowsHostControl
 from vilagent.computer_use.plan_execute import (
@@ -347,20 +351,18 @@ class AutonomousFaraOrchestrator:
     # --- browser lifecycle ---------------------------------------------------
 
     async def _ensure_browser_session(self, config) -> PlaywrightBrowserSession:
-        if self._browser_session is None:
-            session = PlaywrightBrowserSession(
-                headless=config.computer_use.browser.playwright_headless,
-                viewport_width=config.computer_use.browser.viewport_width,
-                viewport_height=config.computer_use.browser.viewport_height,
-            )
-            await session.start()
-            self._browser_session = session
+        # Persistent shared browser: stays open after the task so the operator can see
+        # the result; reused by the next run.
+        self._browser_session = await get_shared_browser_session(
+            headless=config.computer_use.browser.playwright_headless,
+            viewport_width=config.computer_use.browser.viewport_width,
+            viewport_height=config.computer_use.browser.viewport_height,
+        )
         return self._browser_session
 
     async def _close_browser(self) -> None:
-        if self._browser_session is not None:
-            await self._browser_session.close()
-            self._browser_session = None
+        # No-op: the shared browser persists across runs (see close_shared_browser_session).
+        self._browser_session = None
 
 
 def _single_step_plan(prompt: str, directive: str, environment: EnvironmentContext) -> ComputerUsePlan:

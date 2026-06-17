@@ -49,7 +49,11 @@ from vilagent.models import create_chat_model
 from vilagent.config.app_config import get_app_config
 from vilagent.computer_use.fara import FaraVisionActionProvider
 from vilagent.computer_use.image_ops import encode_image_for_vision, scale_point
-from vilagent.computer_use.browser_playwright import PlaywrightBrowserSession, PlaywrightUnavailableError
+from vilagent.computer_use.browser_playwright import (
+    PlaywrightBrowserSession,
+    PlaywrightUnavailableError,
+    get_shared_browser_session,
+)
 from vilagent.config.computer_use_config import ComputerUseFaraModelConfig
 
 
@@ -336,20 +340,19 @@ class ComputerUseStepExecutor:
         )
 
     async def _ensure_browser_session(self, config) -> PlaywrightBrowserSession:
-        if self._browser_session is None:
-            session = PlaywrightBrowserSession(
-                headless=config.computer_use.browser.playwright_headless,
-                viewport_width=config.computer_use.browser.viewport_width,
-                viewport_height=config.computer_use.browser.viewport_height,
-            )
-            await session.start()
-            self._browser_session = session
+        # Reuse a persistent, shared browser so it stays open after the task finishes
+        # (the operator can inspect the result) and is reused by the next run.
+        self._browser_session = await get_shared_browser_session(
+            headless=config.computer_use.browser.playwright_headless,
+            viewport_width=config.computer_use.browser.viewport_width,
+            viewport_height=config.computer_use.browser.viewport_height,
+        )
         return self._browser_session
 
     async def close_browser(self) -> None:
-        if self._browser_session is not None:
-            await self._browser_session.close()
-            self._browser_session = None
+        # Intentionally a no-op: the shared browser persists across runs and is only
+        # torn down on emergency stop or app shutdown (close_shared_browser_session).
+        self._browser_session = None
 
     def _selected_vision_provider(self, config) -> str:
         return "fara"

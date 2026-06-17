@@ -104,6 +104,48 @@ class FakePage:
         return _Ctx()
 
 
+@pytest.mark.asyncio
+async def test_shared_browser_session_persists_and_recreates_when_dead(monkeypatch):
+    import vilagent.computer_use.browser_playwright as bp
+
+    instances: list["_FakeShared"] = []
+
+    class _FakeShared:
+        def __init__(self, **kwargs):
+            self.alive = True
+            self.started = False
+            self.closed = False
+            instances.append(self)
+
+        async def start(self):
+            self.started = True
+
+        def is_alive(self):
+            return self.alive
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(bp, "PlaywrightBrowserSession", _FakeShared)
+    monkeypatch.setattr(bp, "_shared_session", None)
+
+    first = await bp.get_shared_browser_session(headless=True)
+    second = await bp.get_shared_browser_session(headless=True)
+    assert first is second  # reused, not recreated
+    assert len(instances) == 1 and instances[0].started
+
+    # Operator closed the window -> next call rebuilds a fresh session.
+    first.alive = False
+    third = await bp.get_shared_browser_session(headless=True)
+    assert third is not first
+    assert first.closed is True
+    assert len(instances) == 2
+
+    await bp.close_shared_browser_session()
+    assert third.closed is True
+    assert bp._shared_session is None
+
+
 def _session_with_fake_page() -> tuple[PlaywrightBrowserSession, FakePage]:
     s = PlaywrightBrowserSession(viewport_width=1000, viewport_height=700)
     page = FakePage()

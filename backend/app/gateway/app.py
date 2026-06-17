@@ -77,6 +77,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("VILAGENT runtime initialised")
         yield
 
+    # Tear down the persistent Playwright browser (kept open across runs) on shutdown.
+    try:
+        from vilagent.computer_use.browser_playwright import close_shared_browser_session
+        await close_shared_browser_session()
+    except Exception:
+        logger.warning("Failed to close the shared browser on shutdown", exc_info=True)
+
     logger.info("Shutting down API Gateway")
 
 

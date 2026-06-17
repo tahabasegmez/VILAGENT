@@ -1348,6 +1348,12 @@ async def engage_emergency_stop(
 ) -> EmergencyStopStatus:
     try:
         snapshot = await remote.engage_emergency_stop(request.reason)
+        # The kill switch also tears down the persistent Playwright browser.
+        try:
+            from vilagent.computer_use.browser_playwright import close_shared_browser_session
+            await close_shared_browser_session()
+        except Exception:
+            logger.warning("Failed to close the shared browser on emergency stop", exc_info=True)
         return EmergencyStopStatus.model_validate(snapshot.model_dump())
     except (RemoteHostOperationError, RemoteHostUnavailableError) as exc:
         raise HTTPException(status_code=503, detail="Emergency stop is unavailable") from exc

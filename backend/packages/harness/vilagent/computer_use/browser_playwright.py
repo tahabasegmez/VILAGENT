@@ -128,6 +128,15 @@ class PlaywrightBrowserSession:
         self._page = await self._context.new_page()
         self._started = True
 
+    def is_alive(self) -> bool:
+        """True when the browser is still started and connected (window not closed)."""
+        if not self._started or self._browser is None or self._page is None:
+            return False
+        try:
+            return bool(self._browser.is_connected()) and not self._page.is_closed()
+        except Exception:
+            return False
+
     @property
     def current_url(self) -> str:
         try:
@@ -307,3 +316,51 @@ class PlaywrightBrowserSession:
                 await self._playwright.stop()
             except Exception:
                 pass
+
+
+# --- Shared (persistent) browser session -----------------------------------------
+#
+# A single browser is reused across runs and is NOT closed when a task finishes, so the
+# operator keeps seeing the result instead of the window vanishing. It is recreated only
+# if the operator manually closed it, and torn down explicitly on emergency stop / app
+# shutdown via close_shared_browser_session().
+
+_shared_session: PlaywrightBrowserSession | None = None
+_shared_lock = asyncio.Lock()
+
+
+async def get_shared_browser_session(
+    *,
+    headless: bool = False,
+    viewport_width: int = 1280,
+    viewport_height: int = 800,
+) -> PlaywrightBrowserSession:
+    global _shared_session
+    async with _shared_lock:
+        if _shared_session is not None and not _shared_session.is_alive():
+            # The window was closed (or crashed); drop the dead handle and remake it.
+            try:
+                await _shared_session.close()
+            except Exception:
+                pass
+            _shared_session = None
+        if _shared_session is None:
+            session = PlaywrightBrowserSession(
+                headless=headless,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
+            )
+            await session.start()
+            _shared_session = session
+        return _shared_session
+
+
+async def close_shared_browser_session() -> None:
+    global _shared_session
+    async with _shared_lock:
+        if _shared_session is not None:
+            try:
+                await _shared_session.close()
+            except Exception:
+                pass
+            _shared_session = None
