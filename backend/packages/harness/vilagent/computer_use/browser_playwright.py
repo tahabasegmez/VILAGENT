@@ -391,12 +391,33 @@ class PlaywrightBrowserSession:
         except (TypeError, ValueError):
             pixels = 0.0
         if pixels == 0.0:
-            pixels = float(self._viewport_height) * 0.8  # default: scroll down ~one screen
+            # Default: scroll DOWN ~one screen. FARA's convention is negative = down.
+            pixels = -float(self._viewport_height) * 0.8
+        # FARA convention: positive pixels = up, negative = down. Playwright deltaY:
+        # positive = down. So the wheel/window delta is -pixels.
+        delta_y = -pixels
         point = self._point(action)
         if point is not None:
             await self._page.mouse.move(point[0], point[1])
-        # FARA: positive pixels scroll up. Playwright wheel: positive deltaY scrolls down.
-        await self._page.mouse.wheel(0, -pixels)
+        else:
+            # Put the cursor over the page so the wheel targets the document, not a corner.
+            await self._page.mouse.move(self._viewport_width // 2, self._viewport_height // 2)
+        before = None
+        try:
+            before = await self._page.evaluate("() => window.scrollY")
+        except Exception:
+            before = None
+        await self._page.mouse.wheel(0, delta_y)
+        # If the wheel did not move the main document (cursor not over a scrollable area,
+        # or a custom scroll container), scroll the window directly so the page moves.
+        if before is not None:
+            try:
+                await self._page.wait_for_timeout(80)
+                after = await self._page.evaluate("() => window.scrollY")
+                if abs(after - before) < 2:
+                    await self._page.evaluate("(dy) => window.scrollBy(0, dy)", delta_y)
+            except Exception:
+                pass
         return True, None
 
     async def _browser_action(self, action: ActionCommand) -> tuple[bool, str | None]:
