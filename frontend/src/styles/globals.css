@@ -72,8 +72,10 @@
 
 @theme {
   --font-sans:
-    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    var(--font-agentic-sans), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono:
+    var(--font-agentic-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --animate-fade-in: fade-in 1.1s;
   @keyframes fade-in {

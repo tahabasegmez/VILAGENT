@@ -5,7 +5,7 @@ import {
   XCircle, Circle, Loader2, MessageSquare, Image as ImageIcon,
   Code, Globe, Terminal, Pointer, Check, LayoutList, User, Bot, BrainCircuit, Settings
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,16 +43,22 @@ export function ComputerUseOperatorConsole() {
   } = useOperatorRuntimeState();
 
   const [showLogs, setShowLogs] = useState(false);
-  const [rawVilagentLog, setRawVilagentLog] = useState<string>("");
+  const [logSource, setLogSource] = useState<"backend" | "frontend" | "harness">("harness");
+  const [rawLog, setRawLog] = useState<string>("");
+  const [logLoading, setLogLoading] = useState(false);
+
+  const loadLog = useCallback((source: "backend" | "frontend" | "harness") => {
+    setLogLoading(true);
+    fetch(`/api/computer-use/logs/${source}`)
+      .then((res) => res.text())
+      .then((text) => setRawLog(text))
+      .catch((err) => setRawLog(`Failed to load ${source} log: ${String(err)}`))
+      .finally(() => setLogLoading(false));
+  }, []);
 
   useEffect(() => {
-    if (showLogs) {
-      fetch("/api/computer-use/logs/vilagent")
-        .then(res => res.text())
-        .then(text => setRawVilagentLog(text))
-        .catch(err => setRawVilagentLog("Failed to load vilagent.log: " + String(err)));
-    }
-  }, [showLogs]);
+    if (showLogs) loadLog(logSource);
+  }, [showLogs, logSource, loadLog]);
 
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [baselineActivity, setBaselineActivity] = useState<AgentActivity | null>(null);
@@ -172,6 +178,9 @@ export function ComputerUseOperatorConsole() {
     if (!displayActivity?.agents) return [];
     return displayActivity.agents.filter(a => a.agent_id.toLowerCase().includes("vision") || a.agent_id.toLowerCase().includes("fara") || a.agent_id.toLowerCase().includes("tars"));
   }, [displayActivity]);
+
+  const plannerSummary = useMemo(() => summarizeModel(llmAgents), [llmAgents]);
+  const visionSummary = useMemo(() => summarizeModel(visionAgents), [visionAgents]);
 
   const handleRunTask = () => {
     if (!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null || busy !== null) return;
@@ -335,15 +344,15 @@ export function ComputerUseOperatorConsole() {
         {/* Left Column: Chat Box */}
         <section className="flex flex-1 flex-col relative overflow-hidden">
           
-          <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-40 space-y-6">
+          <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-5">
              {chatHistory.length === 0 && approvals.length === 0 ? (
                <div className="flex flex-col items-center justify-center h-full text-center space-y-4 px-6">
                  <div className="size-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20 ring-1 ring-primary/20">
                    <Bot className="size-8 text-primary-foreground" />
                  </div>
                  <div className="space-y-1.5">
-                   <p className="text-base font-semibold text-foreground/90">Ready to operate</p>
-                   <p className="text-sm text-muted-foreground/70 max-w-sm">
+                   <p className="text-[14px] font-semibold text-foreground/90">Ready to operate</p>
+                   <p className="max-w-sm text-[12px] leading-relaxed text-muted-foreground/70">
                      Describe a task and VILAGENT will plan it, then drive the desktop and browser under your approval.
                    </p>
                  </div>
@@ -364,30 +373,30 @@ export function ComputerUseOperatorConsole() {
                      )}
                      
                      <div className={cn(
-                       "max-w-[85%] sm:max-w-[75%] rounded-2xl px-5 py-3.5 shadow-sm relative group",
-                       msg.role === "user" 
-                         ? "bg-primary text-primary-foreground rounded-br-sm" 
-                         : "bg-card border border-border/50 rounded-bl-sm"
+                       "group relative max-w-[85%] rounded-2xl px-4 py-2.5 shadow-sm sm:max-w-[78%]",
+                       msg.role === "user"
+                         ? "rounded-br-md bg-primary text-primary-foreground"
+                         : "rounded-bl-md border border-border/60 bg-card"
                      )}>
                         {msg.role === "agent" && msg.agentRole && (
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
-                            {msg.agentRole} 
-                            <span className="text-[9px] font-normal opacity-50 lowercase">{msg.createdAt.toLocaleTimeString()}</span>
+                          <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-foreground/70">{msg.agentRole}</span>
+                            <span className="font-normal tabular-nums opacity-50">{msg.createdAt.toLocaleTimeString()}</span>
                           </div>
                         )}
-                        
+
                         {msg.thought && (
-                          <details className="mb-3 rounded-lg bg-muted/40 border border-muted text-sm text-muted-foreground group">
-                            <summary className="flex items-center gap-2 p-3 text-xs font-semibold text-muted-foreground/80 cursor-pointer list-none select-none hover:bg-muted/60 transition-colors rounded-lg">
-                              <BrainCircuit className="size-3.5 group-open:text-primary transition-colors" /> Thinking Process
+                          <details className="mb-2 rounded-lg border border-border/60 bg-muted/30 text-muted-foreground">
+                            <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+                              <BrainCircuit className="size-3 text-primary/70" /> Thinking
                             </summary>
-                            <div className="px-3 pb-3 whitespace-pre-wrap font-mono text-[11px] leading-relaxed opacity-80 border-t border-muted/50 pt-3">
+                            <div className="whitespace-pre-wrap border-t border-border/50 px-2.5 pb-2.5 pt-2 font-mono text-[10.5px] leading-relaxed opacity-80">
                               {msg.thought}
                             </div>
                           </details>
                         )}
-                        
-                        <div className="text-[15px] whitespace-pre-wrap leading-relaxed font-sans">
+
+                        <div className="whitespace-pre-wrap text-[13px] leading-relaxed">
                           {msg.text}
                         </div>
                      </div>
@@ -478,14 +487,15 @@ export function ComputerUseOperatorConsole() {
              )}
           </div>
 
-          {/* Centered Chat Input */}
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-4xl px-4 z-20">
-             <div className="bg-card border shadow-xl rounded-2xl flex items-end p-2 gap-2 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+          {/* Composer — pinned footer (does not overlap the message list) */}
+          <div className="flex-none border-t border-border/60 bg-gradient-to-b from-transparent to-muted/20 px-4 py-3">
+            <div className="mx-auto w-full max-w-4xl">
+              <div className="group flex items-end gap-2 rounded-2xl border border-border/70 bg-card/90 p-2 shadow-lg ring-1 ring-transparent transition-all focus-within:border-primary/40 focus-within:ring-primary/25">
                 <Textarea
                   value={draft.task_prompt}
                   onChange={(event) => patchDraft({ task_prompt: event.target.value })}
-                  placeholder="Ask VILAGENT to do something..."
-                  className="min-h-[52px] max-h-[200px] resize-none border-0 shadow-none focus-visible:ring-0 px-4 py-3.5 text-[15px] bg-transparent w-full"
+                  placeholder="Ask VILAGENT to do something…"
+                  className="max-h-[180px] min-h-[44px] w-full resize-none border-0 bg-transparent px-3 py-2.5 text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
                   onKeyDown={(e) => {
                      if (e.key === 'Enter' && !e.shiftKey) {
                          e.preventDefault();
@@ -497,13 +507,16 @@ export function ComputerUseOperatorConsole() {
                    busy={busy}
                    disabled={!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null}
                    label="run-computer-use-task"
-                   className="rounded-xl h-12 w-12 px-0 mb-1 shrink-0 flex items-center justify-center bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+                   className="size-10 shrink-0 rounded-xl bg-primary p-0 text-primary-foreground shadow-md transition-transform hover:bg-primary/90 active:scale-95 disabled:opacity-40"
                    onClick={handleRunTask}
                 >
-                   <Play className="size-5 ml-1" />
+                   <Play className="size-4 translate-x-px fill-current" />
                 </ActionButton>
-             </div>
-             <p className="text-[10px] text-center text-muted-foreground mt-2.5 font-medium">Press Enter to send, Shift+Enter for new line.</p>
+              </div>
+              <p className="mt-1.5 text-center font-mono text-[10px] tracking-tight text-muted-foreground/70">
+                Enter to send · Shift+Enter for a new line
+              </p>
+            </div>
           </div>
         </section>
 
@@ -513,8 +526,8 @@ export function ComputerUseOperatorConsole() {
             
             {/* Plans */}
             <section className="space-y-4">
-              <h2 className="font-semibold flex items-center gap-2 text-sm text-foreground/90">
-                <LayoutList className="size-4 text-primary" /> Plans
+              <h2 className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/80">
+                <LayoutList className="size-3.5 text-primary" /> Plan
               </h2>
               {(agentActivity?.plan_steps ?? []).length === 0 ? <EmptyText>No plans active.</EmptyText> : (
                 <div className="space-y-3 relative before:absolute before:inset-y-0 before:left-2.5 before:w-px before:bg-border/60 pl-1">
@@ -574,8 +587,8 @@ export function ComputerUseOperatorConsole() {
 
             {/* Model Configurations */}
             <section className="space-y-4">
-              <h2 className="font-semibold flex items-center gap-2 text-sm text-foreground/90">
-                <Settings className="size-4 text-primary" /> Models
+              <h2 className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/80">
+                <Settings className="size-3.5 text-primary" /> Configuration
               </h2>
               <div className="space-y-4 rounded-xl border bg-muted/20 p-3.5">
                 <div className="space-y-2.5">
@@ -702,113 +715,67 @@ export function ComputerUseOperatorConsole() {
 
             <Separator />
 
-            {/* LLM Model Activity */}
+            {/* Model activity — one panel per real model in the project */}
             <section className="space-y-3">
-              <h2 className="font-semibold flex items-center gap-2 text-sm text-foreground/90">
-                <MessageSquare className="size-4 text-primary" /> LLM Model
+              <h2 className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/80">
+                <Activity className="size-3.5 text-primary" /> Models
               </h2>
-              {llmAgents.length === 0 ? (
-                <EmptyText>No LLM activity.</EmptyText>
-              ) : (
-                <div className="space-y-3">
-                  {llmAgents.map((agent) => (
-                    <div key={agent.agent_id} className="rounded-xl border bg-muted/20 p-3.5 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[13px] font-semibold text-foreground/90">{agent.role}</p>
-                        <span className={cn(
-                          "rounded-full px-2.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
-                          agent.status === "running" ? "bg-blue-500/15 text-blue-600" :
-                          agent.status === "pending" ? "bg-amber-500/15 text-amber-600" :
-                          "bg-muted text-muted-foreground"
-                        )}>
-                          {agent.status}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <MetricCard label="Requests" value={agent.request_count.toString()} />
-                        <MetricCard label="Tokens" value={agent.total_tokens.toString()} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Vision Model Activity */}
-            <section className="space-y-3">
-              <h2 className="font-semibold flex items-center gap-2 text-sm text-foreground/90">
-                <ImageIcon className="size-4 text-primary" /> Vision Model
-              </h2>
-              {visionAgents.length === 0 ? (
-                <EmptyText>No Vision activity.</EmptyText>
-              ) : (
-                <div className="space-y-3">
-                  {visionAgents.map((agent) => (
-                    <div key={agent.agent_id} className="rounded-xl border bg-muted/20 p-3.5 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[13px] font-semibold text-foreground/90">{agent.role}</p>
-                        <span className={cn(
-                          "rounded-full px-2.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
-                          agent.status === "running" ? "bg-blue-500/15 text-blue-600" :
-                          agent.status === "pending" ? "bg-amber-500/15 text-amber-600" :
-                          "bg-muted text-muted-foreground"
-                        )}>
-                          {agent.status}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <MetricCard label="Requests" value={agent.request_count.toString()} />
-                        <MetricCard label="Tokens" value={agent.total_tokens.toString()} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="space-y-2.5">
+                <ModelPanel
+                  icon={<BrainCircuit className="size-3.5 text-primary" />}
+                  name="Planner LLM"
+                  connection={(textModelSelection?.provider ?? status?.text_model?.provider ?? "—").toUpperCase()}
+                  summary={plannerSummary}
+                />
+                <ModelPanel
+                  icon={<ImageIcon className="size-3.5 text-purple-500" />}
+                  name="FARA Vision"
+                  connection="COLAB · PYNGROK"
+                  summary={visionSummary}
+                />
+              </div>
             </section>
 
           </div>
         </aside>
       </div>
 
-      {/* Global Error Logs Panel */}
+      {/* Raw logs panel — one tab per process, streamed from its file */}
       {showLogs && (
-        <div className="absolute inset-0 z-50 flex justify-end bg-background/50 backdrop-blur-sm transition-all">
-          <div className="w-[450px] bg-card border-l shadow-2xl flex flex-col h-full animate-in slide-in-from-right-10">
-            <div className="p-4 border-b flex items-center justify-between bg-muted/20">
-              <h2 className="font-semibold flex items-center gap-2">
-                <Terminal className="size-4 text-primary" /> System Logs & Errors
+        <div className="absolute inset-0 z-50 flex justify-end bg-background/50 backdrop-blur-sm">
+          <div className="flex h-full w-[560px] max-w-[92vw] animate-in slide-in-from-right-10 flex-col border-l bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
+              <h2 className="flex items-center gap-2 font-mono text-[12px] font-semibold uppercase tracking-[0.12em]">
+                <Terminal className="size-4 text-primary" /> Logs
               </h2>
-              <Button variant="ghost" size="icon" className="size-7" onClick={() => setShowLogs(false)}>
-                <XCircle className="size-4" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => loadLog(logSource)} title="Refresh">
+                  <RefreshCcw className={cn("size-3.5", logLoading && "animate-spin")} />
+                </Button>
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setShowLogs(false)}>
+                  <XCircle className="size-4" />
+                </Button>
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {logs.length === 0 ? (
-                <EmptyText>No logs recorded in this session.</EmptyText>
-              ) : (
-                logs.map(log => (
-                  <div key={log.id} className={cn("rounded-xl border p-3.5", log.level === "error" ? "bg-red-500/5 border-red-500/20" : "bg-muted/20")}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className={cn("text-[10px] font-bold uppercase tracking-wider", log.level === "error" ? "text-red-500" : "text-primary")}>{log.level}</span>
-                      <span className="text-[10px] text-muted-foreground">{new Date(log.created_at).toLocaleTimeString()}</span>
-                    </div>
-                    <p className="text-sm font-medium">{log.message}</p>
-                    {Boolean(log.detail) && (
-                      <pre className="mt-2 text-[10px] bg-background/50 p-2 rounded-lg overflow-x-auto border border-border/50 text-muted-foreground whitespace-pre-wrap">
-                        {typeof log.detail === "string" ? log.detail : JSON.stringify(log.detail, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                ))
-              )}
-              {Boolean(rawVilagentLog) && (
-                <div className="mt-6 border-t pt-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-muted-foreground">vilagent.log</h3>
-                  <pre className="text-[10px] bg-background/50 p-2 rounded-lg overflow-x-auto border border-border/50 text-muted-foreground whitespace-pre-wrap font-mono">
-                    {rawVilagentLog}
-                  </pre>
-                </div>
-              )}
+            <div className="flex items-center gap-1 border-b bg-muted/10 px-3 py-2">
+              {(["backend", "frontend", "harness"] as const).map((source) => (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => setLogSource(source)}
+                  className={cn(
+                    "rounded-md px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                    logSource === source ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  {source}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-auto bg-[#0b0d10]">
+              <pre className="min-h-full whitespace-pre-wrap p-3 font-mono text-[10.5px] leading-relaxed text-zinc-300">
+                {logLoading && !rawLog ? "Loading…" : (rawLog || "(empty)")}
+              </pre>
             </div>
           </div>
         </div>
@@ -821,9 +788,90 @@ export function ComputerUseOperatorConsole() {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border bg-card px-3 py-2 shadow-sm">
-      <p className="text-[10px] uppercase font-medium text-muted-foreground tracking-wider mb-0.5">{label}</p>
-      <p className="text-sm font-bold tabular-nums text-foreground/90">{value}</p>
+    <div className="rounded-lg border border-border/60 bg-card px-2.5 py-1.5">
+      <p className="mb-0.5 font-mono text-[9px] font-medium uppercase tracking-[0.1em] text-muted-foreground">{label}</p>
+      <p className="font-mono text-[13px] font-semibold tabular-nums text-foreground/90">{value}</p>
+    </div>
+  );
+}
+
+type ModelSummary = {
+  requests: number;
+  tokens: number;
+  status: "running" | "pending" | "idle";
+  thinking: string | null;
+  lastEvent: string | null;
+};
+
+function summarizeModel(agents: AgentActivity["agents"]): ModelSummary {
+  let requests = 0;
+  let tokens = 0;
+  let status: ModelSummary["status"] = "idle";
+  let thinking: string | null = null;
+  let lastEvent: string | null = null;
+  for (const a of agents) {
+    requests += a.request_count;
+    tokens += a.total_tokens;
+    if (a.status === "running") {
+      status = "running";
+      thinking = a.current_thought ?? thinking;
+      lastEvent = a.last_event ?? lastEvent;
+    } else if (a.status === "pending" && status !== "running") {
+      status = "pending";
+    }
+  }
+  return { requests, tokens, status, thinking, lastEvent };
+}
+
+function ModelPanel({
+  icon,
+  name,
+  connection,
+  summary,
+}: {
+  icon: ReactNode;
+  name: string;
+  connection: string;
+  summary: ModelSummary;
+}) {
+  const isRunning = summary.status === "running";
+  return (
+    <div className={cn(
+      "rounded-xl border bg-card/60 p-3 transition-colors",
+      isRunning ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60",
+    )}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/60">{icon}</span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-semibold leading-tight text-foreground/90">{name}</p>
+            <p className="truncate font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground/70">{connection}</p>
+          </div>
+        </div>
+        <span className={cn(
+          "flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide",
+          isRunning ? "bg-blue-500/15 text-blue-600" :
+          summary.status === "pending" ? "bg-amber-500/15 text-amber-600" :
+          "bg-muted text-muted-foreground",
+        )}>
+          {isRunning ? <Loader2 className="size-2.5 animate-spin" /> : <Circle className="size-2 fill-current" />}
+          {summary.status}
+        </span>
+      </div>
+      <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+        <MetricCard label="Requests" value={summary.requests.toString()} />
+        <MetricCard label="Tokens" value={summary.tokens.toLocaleString()} />
+      </div>
+      {isRunning && (summary.thinking || summary.lastEvent) && (
+        <details className="mt-2 rounded-lg border border-border/60 bg-muted/30" open={Boolean(summary.thinking)}>
+          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 px-2.5 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/80 [&::-webkit-details-marker]:hidden">
+            <BrainCircuit className="size-3 animate-pulse text-primary/70" /> {summary.thinking ? "Thinking" : "Status"}
+          </summary>
+          <div className="whitespace-pre-wrap border-t border-border/50 px-2.5 pb-2 pt-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground/90">
+            {summary.thinking ?? summary.lastEvent}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -872,21 +920,25 @@ function ModeButton({
   disabled?: boolean;
 }) {
   return (
-    <Button
+    <button
       onClick={onClick}
-      size="sm"
       type="button"
       disabled={disabled}
-      variant={active ? "default" : "outline"}
-      className={cn("h-7 text-xs px-3", active && "bg-primary text-primary-foreground", disabled && "opacity-50")}
+      className={cn(
+        "h-8 rounded-lg border px-3 text-[11px] font-medium tracking-tight transition-all",
+        active
+          ? "border-primary bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+          : "border-border/70 bg-card text-muted-foreground hover:border-primary/40 hover:bg-muted/50 hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-40 hover:border-border/70 hover:bg-card",
+      )}
     >
       {children}
-    </Button>
+    </button>
   );
 }
 
 function EmptyText({ children }: { children: ReactNode }) {
-  return <p className="text-muted-foreground text-[13px] italic bg-muted/30 p-3 rounded-lg border border-dashed border-border/60 text-center">{children}</p>;
+  return <p className="rounded-lg border border-dashed border-border/60 bg-muted/20 p-3 text-center text-[12px] italic text-muted-foreground">{children}</p>;
 }
 
 function Separator() {

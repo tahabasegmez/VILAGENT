@@ -2019,12 +2019,46 @@ def _format_lifecycle_sse(event: str, data: dict, *, event_id: str) -> str:
 
 from fastapi.responses import PlainTextResponse
 
-@router.get('/logs/vilagent', response_class=PlainTextResponse, summary='Get vilagent logs')
-async def get_vilagent_logs() -> str:
-    log_path = 'd:/code/my-projects/vilagent-main/logs/vilagent.log'
+# Operator log sources -> the on-disk file under <project_root>/logs. Backend and
+# harness share the in-process vilagent.log; gateway.log / frontend.log are the dev
+# server stdout redirects (present when launched via the dev tooling).
+_LOG_SOURCES = {
+    "backend": "gateway.log",
+    "frontend": "frontend.log",
+    "harness": "vilagent.log",
+    # Backwards-compatible alias for the old single endpoint.
+    "vilagent": "vilagent.log",
+}
+_LOG_TAIL_BYTES = 262144  # ~256 KiB; show the most recent log tail only.
+
+
+def _logs_dir() -> Path:
+    # backend/app/gateway/routers/computer_use.py -> project root is 5 parents up.
+    return Path(__file__).resolve().parents[4] / "logs"
+
+
+def _read_log_tail(file_name: str) -> str:
+    path = _logs_dir() / file_name
     try:
-        with open(log_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except Exception as e:
-        return f'Failed to read logs: {e}'
+        if not path.exists():
+            return f"(no log file yet at {path})"
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            if size > _LOG_TAIL_BYTES:
+                fh.seek(size - _LOG_TAIL_BYTES)
+            data = fh.read()
+        text = data.decode("utf-8", errors="replace")
+        if size > _LOG_TAIL_BYTES:
+            text = "... (truncated; showing the most recent output) ...\n" + text.split("\n", 1)[-1]
+        return text or "(log file is empty)"
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        return f"Failed to read {file_name}: {exc}"
+
+
+@router.get('/logs/{source}', response_class=PlainTextResponse, summary='Get raw operator logs for a source (backend|frontend|harness)')
+async def get_operator_logs(source: str) -> str:
+    file_name = _LOG_SOURCES.get(source)
+    if file_name is None:
+        return f"Unknown log source '{source}'. Valid sources: backend, frontend, harness."
+    return _read_log_tail(file_name)
 
