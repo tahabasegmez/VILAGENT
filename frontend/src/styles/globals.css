@@ -304,6 +304,15 @@
     @apply bg-background text-foreground;
   }
 
+  /* Animated "thinking" text, like modern AI chat UIs. */
+  .shimmer {
+    animation: shimmer-pulse 1.7s ease-in-out infinite;
+  }
+  @keyframes shimmer-pulse {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 1; }
+  }
+
   .container-md {
     width: 100%;
     @media (width >= 40rem) {

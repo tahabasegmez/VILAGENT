@@ -109,6 +109,7 @@ class AutonomousFaraOrchestrator:
         self._threshold = auto_approve_risk_threshold
         self._max_actions = max(4, max_actions)
         self._browser_session: PlaywrightBrowserSession | None = None
+        self._fara_provider = None
 
     async def run(
         self,
@@ -149,6 +150,11 @@ class AutonomousFaraOrchestrator:
             await self._close_browser()
 
         result = _result(plan, status, summary, error_code=error_code)
+        fara = self._fara_provider
+        result = result.model_copy(update={
+            "vision_request_count": getattr(fara, "request_count", 0) or 0,
+            "vision_total_tokens": getattr(fara, "total_tokens", 0) or 0,
+        })
         if on_plan_update:
             on_plan_update(plan, result.steps, None)
         return result
@@ -158,6 +164,10 @@ class AutonomousFaraOrchestrator:
     async def _make_directive(self, prompt: str) -> tuple[EnvironmentContext, str]:
         try:
             model = create_chat_model(self._instruction_model_name, thinking_enabled=False, attach_tracing=False)
+            try:
+                model = model.bind(temperature=0)
+            except Exception:
+                pass
             response = await model.ainvoke(
                 [
                     SystemMessage(content=_DIRECTIVE_SYSTEM_PROMPT),
@@ -178,12 +188,13 @@ class AutonomousFaraOrchestrator:
         api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
         default_model = config.computer_use.vision_fara_model.model_name
         detected = await _detect_served_model_name_once({}, base_url, api_key, default_model)
-        return FaraVisionActionProvider(
+        self._fara_provider = FaraVisionActionProvider(
             ComputerUseFaraModelConfig(
                 enabled=True, model_name=detected, base_url=base_url, api_key=api_key,
                 timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
             )
         )
+        return self._fara_provider
 
     # --- browser run ---------------------------------------------------------
 

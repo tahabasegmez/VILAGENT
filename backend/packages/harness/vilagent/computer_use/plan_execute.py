@@ -119,6 +119,11 @@ class PlanExecuteRunResult(BaseModel):
     replan_count: int = 0
     request_count_estimate: int = 0
     summary: str = ""
+    # Usage harvested from the models' own responses (no extra calls).
+    planner_request_count: int = 0
+    planner_total_tokens: int = 0
+    vision_request_count: int = 0
+    vision_total_tokens: int = 0
 
 
 class PlannerProtocol(Protocol):
@@ -137,12 +142,52 @@ class PlannerProtocol(Protocol):
         """Return a revised plan after a blocked/failed step."""
 
 
+def _extract_reasoning(message: Any) -> str | None:
+    """Pull a model's natural-language reasoning/thinking from its response, if present.
+
+    Binds to what the model ALREADY returns (additional_kwargs / content thinking blocks
+    / response_metadata) — never an extra request.
+    """
+    extra = getattr(message, "additional_kwargs", {}) or {}
+    for key in ("reasoning_content", "reasoning"):
+        val = extra.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        parts = [
+            (block.get("thinking") or block.get("text"))
+            for block in content
+            if isinstance(block, dict) and block.get("type") in ("thinking", "reasoning")
+        ]
+        parts = [p for p in parts if isinstance(p, str) and p.strip()]
+        if parts:
+            return "\n".join(parts).strip()
+    meta = getattr(message, "response_metadata", {}) or {}
+    val = meta.get("reasoning_content") or meta.get("reasoning")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
 class JsonLLMPlanner:
     """Small JSON planner for the plan-execute architecture."""
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, on_thinking: Callable[[str], None] | None = None):
         self._model_name = model_name
-        self._model = create_chat_model(model_name, thinking_enabled=False, attach_tracing=False)
+        self._on_thinking = on_thinking
+        self.request_count = 0
+        self.total_tokens = 0
+        # Enable thinking when the model supports it so we can surface the planner's
+        # reasoning; fall back silently when it does not. temperature 0 -> deterministic.
+        try:
+            model = create_chat_model(model_name, thinking_enabled=True, attach_tracing=False)
+        except Exception:
+            model = create_chat_model(model_name, thinking_enabled=False, attach_tracing=False)
+        try:
+            self._model = model.bind(temperature=0)
+        except Exception:
+            self._model = model
 
     async def plan(self, prompt: str, *, context: dict[str, Any]) -> ComputerUsePlan:
         return await self._invoke_plan(
@@ -183,6 +228,19 @@ class JsonLLMPlanner:
                 ),
             ]
         )
+        self.request_count += 1
+        usage = getattr(response, "usage_metadata", None)
+        if isinstance(usage, dict):
+            try:
+                self.total_tokens += int(usage.get("total_tokens") or 0)
+            except (TypeError, ValueError):
+                pass
+        reasoning = _extract_reasoning(response)
+        if reasoning and self._on_thinking:
+            try:
+                self._on_thinking(reasoning)
+            except Exception:
+                pass
         text = _message_text(response)
         try:
             payload = _extract_json_object(text)
@@ -316,12 +374,17 @@ class ComputerUseStepExecutor:
         # Lazily-created dedicated Playwright browser, reused across all browser steps
         # of a run and closed by the orchestrator at the end.
         self._browser_session: PlaywrightBrowserSession | None = None
+        # Cached FARA provider (accumulates request/token usage across steps).
+        self._fara_provider: FaraVisionActionProvider | None = None
 
     async def _build_fara_provider(self, config) -> FaraVisionActionProvider:
-        """Construct the FARA action provider bound to the detected served model.
+        """Construct (and cache) the FARA action provider bound to the served model.
 
+        Cached for the whole run so its request/token counters accumulate across steps.
         Raises on an unreachable endpoint so callers can fail the step cleanly.
         """
+        if self._fara_provider is not None:
+            return self._fara_provider
         base_url = config.computer_use.vision_fara_model.base_url
         api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
         default_model = config.computer_use.vision_fara_model.model_name
@@ -331,7 +394,7 @@ class ComputerUseStepExecutor:
             api_key,
             default_model,
         )
-        return FaraVisionActionProvider(
+        self._fara_provider = FaraVisionActionProvider(
             ComputerUseFaraModelConfig(
                 enabled=True,
                 model_name=detected_model,
@@ -340,6 +403,7 @@ class ComputerUseStepExecutor:
                 timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
             )
         )
+        return self._fara_provider
 
     async def _ensure_browser_session(self, config) -> PlaywrightBrowserSession:
         # Reuse a persistent, shared browser so it stays open after the task finishes
@@ -1301,7 +1365,7 @@ class PlanExecuteComputerUseOrchestrator:
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
     ) -> PlanExecuteRunResult:
         try:
-            return await self._run(
+            result = await self._run(
                 prompt,
                 owner=owner,
                 session_id=session_id,
@@ -1311,6 +1375,14 @@ class PlanExecuteComputerUseOrchestrator:
                 on_plan_update=on_plan_update,
                 cancel_check=cancel_check,
             )
+            # Attach usage harvested from the models' own responses (no extra calls).
+            fara = getattr(self._executor, "_fara_provider", None)
+            return result.model_copy(update={
+                "planner_request_count": getattr(self._planner, "request_count", 0) or 0,
+                "planner_total_tokens": getattr(self._planner, "total_tokens", 0) or 0,
+                "vision_request_count": getattr(fara, "request_count", 0) or 0,
+                "vision_total_tokens": getattr(fara, "total_tokens", 0) or 0,
+            })
         finally:
             # Always tear down the dedicated Playwright browser at the end of a run.
             await self._executor.close_browser()

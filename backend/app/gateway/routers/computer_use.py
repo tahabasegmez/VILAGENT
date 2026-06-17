@@ -295,7 +295,7 @@ class TextModelSelectionResponse(BaseModel):
     provider: str
     selected_config_name: str | None = None
     selected_model_name: str | None = None
-    options: list[str] = Field(default_factory=lambda: ["gemini", "glm", "ollama", "fara"])
+    options: list[str] = Field(default_factory=lambda: ["gemini", "glm", "ollama"])
     gemini: TextModelPresetInfo
     glm: TextModelPresetInfo
     ollama: TextModelPresetInfo
@@ -303,7 +303,7 @@ class TextModelSelectionResponse(BaseModel):
 
 
 class TextModelSelectionUpdateRequest(BaseModel):
-    provider: str = Field(pattern="^(gemini|glm|ollama|fara)$")
+    provider: str = Field(pattern="^(gemini|glm|ollama)$")
     model_name: str | None = Field(default=None, max_length=200)
     api_key: str | None = Field(default=None, max_length=2000)
     base_url: str | None = Field(default=None, max_length=2000)
@@ -401,6 +401,18 @@ async def _run_plan_execute_task(
         # the highest-risk actions) so no tool call stops on an approval gate.
         approval_threshold = RiskLevel.critical if config.computer_use.unrestricted else body.auto_approve_risk_threshold
 
+        # Bind the models' OWN natural-language output (planner reasoning + FARA's per-step
+        # thoughts) — no extra requests — so the chat can show what the models "said".
+        narration: list[dict[str, str]] = []
+
+        def _record_thought(role: str, text: str | None) -> None:
+            if not text or not text.strip():
+                return
+            t = " ".join(text.strip().split())
+            if narration and narration[-1].get("text") == t:
+                return
+            narration.append({"role": role, "text": t})
+
         try:
             if agent_approach == "autonomous":
                 orchestrator = AutonomousFaraOrchestrator(
@@ -411,7 +423,7 @@ async def _run_plan_execute_task(
                 )
             else:
                 orchestrator = PlanExecuteComputerUseOrchestrator(
-                    planner=JsonLLMPlanner(model_name),
+                    planner=JsonLLMPlanner(model_name, on_thinking=lambda t: _record_thought("planner", t)),
                     remote=remote,
                     auto_approve_risk_threshold=approval_threshold,
                     execution_mode=strategy,
@@ -445,7 +457,7 @@ async def _run_plan_execute_task(
                         activity.agents[i].last_event = last_event
                         if current_thought is not None:
                             activity.agents[i].current_thought = current_thought
-                        
+
                         if agent_id == "computer_use_plan_execute":
                             # Set others to idle
                             for j, other in enumerate(activity.agents):
@@ -457,6 +469,10 @@ async def _run_plan_execute_task(
                             activity.agents[0].status = "idle"
                             for j in range(1, len(activity.agents)):
                                 activity.agents[j].status = "running" if activity.agents[j].agent_id == agent_id else "idle"
+            # Capture FARA's natural-language thoughts as they happen (vision/browser).
+            rid = raw_agent_id.lower()
+            if current_thought and ("vision" in rid or "browser" in rid or "fara" in rid):
+                _record_thought("vision", current_thought)
 
         def on_plan_update(plan: Any, results: list[Any], current_step_id: str | None) -> None:
             activity = _PLAN_EXECUTE_ACTIVITY.get(body.thread_id)
@@ -500,10 +516,11 @@ async def _run_plan_execute_task(
             "steps": [step.model_dump(mode="json") for step in result.steps],
             "replan_count": result.replan_count,
             "request_count_estimate": result.request_count_estimate,
+            "narration": narration,
             "messages": [
                 {
                     "type": "ai",
-                    "content": _format_plan_execute_response(result),
+                    "content": _format_plan_execute_response(result, narration),
                 }
             ],
         },
@@ -1405,7 +1422,7 @@ def _text_model_selection_response(config: AppConfig) -> TextModelSelectionRespo
         provider=selected,
         selected_config_name=selected_config_name,
         selected_model_name=selected_model_name,
-        options=["gemini", "glm", "ollama", "fara"],
+        options=["gemini", "glm", "ollama"],
         gemini=TextModelPresetInfo(
             provider="gemini",
             model_config_name="vilagent-text-gemini",
@@ -1550,7 +1567,30 @@ def _friendly_error(code: str | None, summary: str | None) -> str:
     return "an unexpected error"
 
 
-def _format_plan_execute_response(result: Any) -> str:
+def _narration_block(narration: list[dict[str, str]] | None) -> str:
+    """The models' own natural-language account while working (holds the answer)."""
+    if not narration:
+        return ""
+    seen: set[str] = set()
+    lines: list[str] = []
+    for item in narration:
+        text = (item.get("text") or "").strip()
+        if len(text) < 4:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(text)
+    if not lines:
+        return ""
+    # Keep the most recent thoughts — that is where the read result / answer lands.
+    lines = lines[-10:]
+    return "**What the agent did and found:**\n" + "\n".join(lines)
+
+
+def _format_plan_execute_response(result: Any, narration: list[dict[str, str]] | None = None) -> str:
+    account = _narration_block(narration)
     status = result.status.value
     plan_steps = list(result.plan.steps)
     outcomes = list(result.steps)
@@ -1563,11 +1603,13 @@ def _format_plan_execute_response(result: Any) -> str:
     def _label(outcome: Any) -> str:
         return instructions.get(outcome.step_id) or (outcome.summary or outcome.step_id)
 
+    tail = f"\n\n{account}" if account else ""
+
     if status == "completed":
         if is_autonomous:
             brief = instructions.get("autonomous", goal) or goal
             body = f"\n\n{brief}" if brief else ""
-            return f"✅ **Done.**{body}"
+            return f"✅ **Done.**{body}{tail}"
         lines = ["✅ **Task complete.**"]
         if goal:
             lines += ["", f"*{goal}*"]
@@ -1575,7 +1617,7 @@ def _format_plan_execute_response(result: Any) -> str:
         if done:
             lines += ["", "**What I did:**"]
             lines += [f"{i + 1}. {_label(o)}" for i, o in enumerate(done)]
-        return "\n".join(lines)
+        return "\n".join(lines) + tail
 
     # failed / blocked
     lines = ["⚠️ **I couldn't fully finish this task.**"]
@@ -1595,7 +1637,7 @@ def _format_plan_execute_response(result: Any) -> str:
     else:
         lines += ["", f"**Why it stopped:** {_friendly_error(None, getattr(result, 'summary', None))}"]
     lines += ["", "_Tip: try rephrasing the task or splitting it into smaller, clearer steps._"]
-    return "\n".join(lines)
+    return "\n".join(lines) + tail
 
 
 def _activity_from_plan_execute_result(
@@ -1605,6 +1647,10 @@ def _activity_from_plan_execute_result(
     config: AppConfig,
     result: Any,
 ) -> AgentActivityResponse:
+    planner_requests = getattr(result, "planner_request_count", 0) or result.request_count_estimate
+    planner_tokens = getattr(result, "planner_total_tokens", 0) or 0
+    vision_requests = getattr(result, "vision_request_count", 0) or 0
+    vision_tokens = getattr(result, "vision_total_tokens", 0) or 0
     agents = [
         AgentActivityItem(
             agent_id="computer_use_plan_execute",
@@ -1612,7 +1658,8 @@ def _activity_from_plan_execute_result(
             status="idle",
             task=result.plan.goal,
             model_name=model_name,
-            request_count=result.request_count_estimate,
+            request_count=planner_requests,
+            total_tokens=planner_tokens,
             last_event=f"{result.status.value}; replans={result.replan_count}",
         )
     ]
@@ -1638,7 +1685,8 @@ def _activity_from_plan_execute_result(
                 model_name=_selected_vision_model_name(config.computer_use)
                 if label == "vision" and _selected_vision_enabled(config.computer_use)
                 else None,
-                request_count=0,
+                request_count=vision_requests if label == "vision" else 0,
+                total_tokens=vision_tokens if label == "vision" else 0,
                 tool_calls=[step.action_status.value if step.action_status else step.status.value for step in executor_steps],
                 last_event=(failed.summary if failed else executor_steps[-1].summary if executor_steps else "idle"),
             )
@@ -1651,7 +1699,7 @@ def _activity_from_plan_execute_result(
         total_request_count=sum(agent.request_count for agent in agents),
         total_input_tokens=0,
         total_output_tokens=0,
-        total_tokens=0,
+        total_tokens=sum(agent.total_tokens for agent in agents),
     )
 
 
@@ -1817,15 +1865,13 @@ def _int_value(value: Any) -> int:
 
 def _selected_text_provider(config: AppConfig) -> str:
     preset = _get_vilagent_state_value("text_provider", None)
-    if preset in {"gemini", "glm", "ollama", "fara"}:
+    if preset in {"gemini", "glm", "ollama"}:
         return preset
     selected = config.computer_use.text_model.model_config_name or ""
     if "glm" in selected:
         return "glm"
     elif "ollama" in selected:
         return "ollama"
-    elif "fara" in selected:
-        return "fara"
     return "gemini"
 
 
@@ -2126,4 +2172,18 @@ async def get_operator_logs(source: str) -> str:
     if file_name is None:
         return f"Unknown log source '{source}'. Valid sources: backend, frontend, harness."
     return _read_log_tail(file_name)
+
+
+@router.delete('/logs/{source}', response_class=PlainTextResponse, summary='Clear (truncate) a log file')
+async def clear_operator_logs(source: str) -> str:
+    file_name = _LOG_SOURCES.get(source)
+    if file_name is None:
+        return f"Unknown log source '{source}'."
+    path = _logs_dir() / file_name
+    try:
+        if path.exists():
+            path.write_text("", encoding="utf-8")
+        return "cleared"
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        return f"Failed to clear {file_name}: {exc}"
 

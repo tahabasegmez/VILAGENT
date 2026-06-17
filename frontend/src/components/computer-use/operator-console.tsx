@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  Activity, BrainCircuit, Bot, Check, CheckCircle2, Circle, Cpu,
+  Activity, BrainCircuit, Bot, Check, CheckCircle2, ChevronDown, Circle, Cpu,
   Image as ImageIcon, LayoutList, Loader2, Pointer, RefreshCcw,
-  Send, Settings, ShieldAlert, Sparkles, Square, Terminal, XCircle,
+  Send, Settings, ShieldAlert, Square, Terminal, Trash2, XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -56,6 +56,12 @@ export function ComputerUseOperatorConsole() {
       .catch((err) => setRawLog(`Failed to load ${source} log: ${String(err)}`))
       .finally(() => setLogLoading(false));
   }, []);
+
+  const clearLog = useCallback((source: LogSource) => {
+    fetch(`/api/computer-use/logs/${source}`, { method: "DELETE" })
+      .then(() => loadLog(source))
+      .catch(() => undefined);
+  }, [loadLog]);
 
   useEffect(() => {
     if (showLogs) loadLog(logSource);
@@ -225,19 +231,9 @@ export function ComputerUseOperatorConsole() {
       {/* Header */}
       <header className="relative z-30 flex-none border-b border-white/5 bg-white/[0.02] px-5 py-3 backdrop-blur-xl">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-violet-600 shadow-[0_0_22px_-2px_rgba(192,132,252,0.7)] ring-1 ring-fuchsia-400/30">
-              <Sparkles className="size-[18px] text-white" />
-            </div>
-            <div className="leading-none">
-              <h1 className="bg-gradient-to-r from-fuchsia-200 to-violet-200 bg-clip-text text-[15px] font-bold tracking-tight text-transparent">VILAGENT</h1>
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fuchsia-300/50">computer-use operator</span>
-            </div>
-            {agentApproach ? (
-              <span className="ml-1 rounded-full border border-fuchsia-400/20 bg-fuchsia-500/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-fuchsia-200/80">
-                {agentApproach === "autonomous" ? "Autonomous" : "Plan + Execute"}
-              </span>
-            ) : null}
+          <div className="flex items-center gap-2.5">
+            <span className="size-2 rounded-full bg-fuchsia-400 shadow-[0_0_10px_2px_rgba(192,132,252,0.8)]" />
+            <h1 className="bg-gradient-to-r from-fuchsia-200 to-violet-200 bg-clip-text text-[16px] font-bold tracking-[0.04em] text-transparent">VILAGENT</h1>
           </div>
           <button
             type="button"
@@ -341,20 +337,16 @@ export function ComputerUseOperatorConsole() {
                         <Loader2 className="size-3.5 animate-spin" />
                       </div>
                     </div>
-                    <div className="min-w-[260px] space-y-2.5 rounded-2xl rounded-bl-md border border-fuchsia-400/20 bg-white/[0.03] px-4 py-3">
+                    <div className="max-w-[85%] space-y-1.5 rounded-2xl rounded-bl-md border border-fuchsia-400/20 bg-white/[0.03] px-4 py-3 sm:max-w-[78%]">
                       <div className="flex items-center gap-2 text-[13px] text-zinc-200">
                         <span className="size-1.5 animate-pulse rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(192,132,252,0.9)]" />
-                        {liveAgent?.last_event ?? "Working…"}
+                        <span className="shimmer">{liveAgent?.last_event ?? "Working…"}</span>
                       </div>
                       {liveAgent?.current_thought && (
-                        <details className="rounded-lg border border-white/8 bg-black/20">
-                          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-fuchsia-300/70 [&::-webkit-details-marker]:hidden">
-                            <BrainCircuit className="size-3 animate-pulse" /> Thinking
-                          </summary>
-                          <div className="whitespace-pre-wrap border-t border-white/8 px-2.5 pb-2 pt-1.5 font-mono text-[10.5px] leading-relaxed text-zinc-400">
-                            {liveAgent.current_thought}
-                          </div>
-                        </details>
+                        <p className="shimmer flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-400">
+                          <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
+                          <span className="line-clamp-3">{liveAgent.current_thought}</span>
+                        </p>
                       )}
                     </div>
                   </div>
@@ -363,41 +355,39 @@ export function ComputerUseOperatorConsole() {
             )}
           </div>
 
-          {/* Composer */}
-          <div className="flex-none border-t border-white/5 bg-gradient-to-b from-transparent to-fuchsia-950/10 px-4 py-3">
+          {/* Composer — compact, modern */}
+          <div className="flex-none px-4 pb-4 pt-1">
             <div className="mx-auto w-full max-w-3xl">
-              <div className="group flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2 shadow-[0_0_0_1px_rgba(0,0,0,0.2)] transition-all focus-within:border-fuchsia-400/40 focus-within:shadow-[0_0_28px_-8px_rgba(192,132,252,0.6)]">
+              <div className="group flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-4 pr-1 backdrop-blur transition-all focus-within:border-fuchsia-400/50 focus-within:bg-white/[0.06] focus-within:shadow-[0_0_24px_-10px_rgba(192,132,252,0.7)]">
                 <Textarea
                   value={draft.task_prompt}
                   onChange={(e) => patchDraft({ task_prompt: e.target.value })}
-                  placeholder={isRunning ? "VILAGENT is working… press stop to halt." : "Ask VILAGENT to do something…"}
+                  placeholder={isRunning ? "Working… press stop to halt" : "Ask VILAGENT…"}
                   disabled={isRunning}
-                  className="max-h-[180px] min-h-[44px] w-full resize-none border-0 bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-zinc-100 shadow-none placeholder:text-zinc-500 focus-visible:ring-0 disabled:opacity-60"
+                  rows={1}
+                  className="max-h-[140px] min-h-0 w-full resize-none self-center border-0 bg-transparent px-0 py-1.5 text-[13px] leading-relaxed text-zinc-100 shadow-none placeholder:text-zinc-500 focus-visible:ring-0 disabled:opacity-60"
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleRunTask(); } }}
                 />
                 {isRunning ? (
                   <button
                     type="button"
                     onClick={handleEmergencyStop}
-                    title="Emergency stop"
-                    className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-[0_0_22px_-6px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-95"
+                    title="Stop"
+                    className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-[0_0_16px_-5px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-90"
                   >
-                    <Square className="size-4 fill-current" />
+                    <Square className="size-3 fill-current" />
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={handleRunTask}
                     disabled={!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null}
-                    className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-violet-600 text-white shadow-[0_0_22px_-6px_rgba(192,132,252,0.9)] transition-transform hover:from-fuchsia-400 hover:to-violet-500 active:scale-95 disabled:opacity-30 disabled:shadow-none"
+                    className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-fuchsia-500 to-violet-600 text-white shadow-[0_0_16px_-5px_rgba(192,132,252,0.9)] transition-transform hover:from-fuchsia-400 hover:to-violet-500 active:scale-90 disabled:opacity-25 disabled:shadow-none"
                   >
-                    <Send className="size-4" />
+                    <Send className="size-3.5" />
                   </button>
                 )}
               </div>
-              <p className="mt-1.5 text-center font-mono text-[10px] tracking-tight text-zinc-500">
-                {isRunning ? "■ Stop halts the run immediately" : "Enter to send · Shift+Enter for a new line"}
-              </p>
             </div>
           </div>
         </section>
@@ -447,17 +437,17 @@ export function ComputerUseOperatorConsole() {
           </Panel>
 
           {/* Models */}
-          <Panel icon={<Activity className="size-3.5" />} title="Models">
+          <Panel icon={<Activity className="size-3.5" />} title="Models" collapsible>
             <div className="space-y-2.5">
               <ModelPanel
                 icon={<Cpu className="size-3.5 text-violet-300" />}
-                name="Planner LLM"
-                connection={(textModelSelection?.provider ?? status?.text_model?.provider ?? "—").toUpperCase()}
+                name="LLM"
+                connection={titleCase(textModelSelection?.provider ?? status?.text_model?.provider ?? "—")}
                 summary={plannerSummary}
               />
               <ModelPanel
                 icon={<ImageIcon className="size-3.5 text-fuchsia-300" />}
-                name="FARA Vision"
+                name="VLM"
                 connection="COLAB · PYNGROK"
                 summary={visionSummary}
               />
@@ -465,9 +455,9 @@ export function ComputerUseOperatorConsole() {
           </Panel>
 
           {/* Configuration */}
-          <Panel icon={<Settings className="size-3.5" />} title="Configuration">
+          <Panel icon={<Settings className="size-3.5" />} title="Configuration" collapsible>
             <div className="space-y-3.5">
-              <Field label="Auto-approve risk" hint="Steps up to this level run automatically.">
+              <Field label="Auto-approve risk">
                 <div className="grid grid-cols-4 gap-1">
                   {([["low", "Low"], ["medium", "Med"], ["high", "High"], ["critical", "Max"]] as const).map(([level, lbl]) => (
                     <Chip key={level} active={autoApproveRiskThreshold === level} onClick={() => setAutoApproveRiskThreshold(level)}>{lbl}</Chip>
@@ -477,16 +467,16 @@ export function ComputerUseOperatorConsole() {
 
               <Field label="Planner">
                 <div className="grid grid-cols-2 gap-1.5">
-                  {(textModelSelection?.options || ["gemini", "glm", "ollama", "fara"]).map((p) => (
-                    <Chip key={p} active={textModelSelection?.provider === p} onClick={() => handleSwitchTextModel(p as TextModelProviderPreset)}>{p.toUpperCase()}</Chip>
+                  {(textModelSelection?.options || ["gemini", "glm", "ollama"]).map((p) => (
+                    <Chip key={p} active={textModelSelection?.provider === p} onClick={() => handleSwitchTextModel(p as TextModelProviderPreset)}>{titleCase(p)}</Chip>
                   ))}
                 </div>
               </Field>
 
-              <Field label="Approach" hint="Plan + Execute breaks the task into steps. Autonomous lets FARA run the whole task.">
+              <Field label="Approach">
                 <div className="grid grid-cols-2 gap-1.5">
-                  <Chip active={agentApproach === "plan_execute"} onClick={() => handleSwitchApproach("plan_execute")}>Plan + Execute</Chip>
-                  <Chip active={agentApproach === "autonomous"} onClick={() => handleSwitchApproach("autonomous")}>Autonomous</Chip>
+                  <Chip active={agentApproach === "plan_execute"} onClick={() => handleSwitchApproach("plan_execute")}>Plan</Chip>
+                  <Chip active={agentApproach === "autonomous"} onClick={() => handleSwitchApproach("autonomous")}>Auto</Chip>
                 </div>
               </Field>
 
@@ -499,20 +489,15 @@ export function ComputerUseOperatorConsole() {
                 </Field>
               )}
 
-              <Field label="Recovery supervisor" hint="When vision is stuck, a stronger model steps in once.">
+              <Field label="Recovery supervisor">
                 <div className="grid grid-cols-2 gap-1.5">
                   <Chip active={visionRecovery === false} onClick={() => handleSwitchVisionRecovery(false)}>Off</Chip>
                   <Chip active={visionRecovery === true} onClick={() => handleSwitchVisionRecovery(true)}>Supervised</Chip>
                 </div>
                 {visionRecovery && (
-                  <div className="mt-2 space-y-1.5">
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <Chip active={supervisorSource === "planner"} onClick={() => handleSwitchSupervisorSource("planner")}>Planner</Chip>
-                      <Chip active={supervisorSource === "api"} disabled={!supervisorApiConfigured} onClick={() => handleSwitchSupervisorSource("api")}>GLM-V API</Chip>
-                    </div>
-                    <p className="text-[10px] leading-snug text-zinc-500">
-                      {supervisorApiConfigured ? `GLM-V API: ${supervisorApiModelName ?? "configured"}.` : "Set VILAGENT_SUPERVISOR_API_KEY to enable the API option."}
-                    </p>
+                  <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    <Chip active={supervisorSource === "planner"} onClick={() => handleSwitchSupervisorSource("planner")}>Planner</Chip>
+                    <Chip active={supervisorSource === "api"} disabled={!supervisorApiConfigured} onClick={() => handleSwitchSupervisorSource("api")}>GLM-V</Chip>
                   </div>
                 )}
               </Field>
@@ -534,10 +519,20 @@ export function ComputerUseOperatorConsole() {
             </div>
             <div className="flex items-center gap-1 border-b border-white/8 px-3 py-2">
               {(["backend", "frontend", "harness"] as const).map((src) => (
-                <button key={src} type="button" onClick={() => setLogSource(src)} className={cn(
-                  "rounded-md px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                <div key={src} className={cn(
+                  "flex items-center rounded-md font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors",
                   logSource === src ? "bg-gradient-to-br from-fuchsia-500 to-violet-600 text-white shadow-[0_0_14px_-4px_rgba(192,132,252,0.9)]" : "text-zinc-400 hover:bg-white/5 hover:text-fuchsia-200",
-                )}>{src}</button>
+                )}>
+                  <button type="button" onClick={() => setLogSource(src)} className="py-1 pl-3 pr-1.5">{src}</button>
+                  <button
+                    type="button"
+                    title={`Clear ${src} log`}
+                    onClick={() => clearLog(src)}
+                    className={cn("grid place-items-center rounded-md py-1 pr-2 pl-0.5 transition-opacity", logSource === src ? "text-white/80 hover:text-white" : "text-zinc-500 hover:text-red-300")}
+                  >
+                    <Trash2 className="size-3" />
+                  </button>
+                </div>
               ))}
             </div>
             <div className="flex-1 overflow-auto bg-black/40">
@@ -556,13 +551,25 @@ export function ComputerUseOperatorConsole() {
 // Presentational helpers
 // ----------------------------------------------------------------------------
 
-function Panel({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+function titleCase(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function Panel({ icon, title, children, collapsible = false, defaultOpen = true }: { icon: ReactNode; title: string; children: ReactNode; collapsible?: boolean; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3.5">
-      <h2 className="mb-3 flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200/80">
-        <span className="text-fuchsia-400">{icon}</span> {title}
-      </h2>
-      {children}
+      <button
+        type="button"
+        onClick={() => collapsible && setOpen(o => !o)}
+        className={cn("flex w-full items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200/80", collapsible && "cursor-pointer")}
+      >
+        <span className="text-fuchsia-400">{icon}</span>
+        <span className="flex-1 text-left">{title}</span>
+        {collapsible && <ChevronDown className={cn("size-3.5 text-zinc-500 transition-transform", !open && "-rotate-90")} />}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
     </section>
   );
 }

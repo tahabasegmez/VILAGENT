@@ -142,6 +142,9 @@ class FaraVisionActionProvider:
 
     def __init__(self, config: ComputerUseFaraModelConfig):
         self._config = config
+        # Usage counters bound to FARA's existing HTTP responses (no extra calls).
+        self.request_count = 0
+        self.total_tokens = 0
 
     def is_enabled(self) -> bool:
         return self._config.enabled and bool(self._config.base_url)
@@ -212,6 +215,15 @@ class FaraVisionActionProvider:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
+
+        # Bind usage to the response we already received (no extra request).
+        self.request_count += 1
+        usage = data.get("usage") if isinstance(data, dict) else None
+        if isinstance(usage, dict):
+            try:
+                self.total_tokens += int(usage.get("total_tokens") or 0)
+            except (TypeError, ValueError):
+                pass
 
         choice = data["choices"][0]["message"]
         content = choice.get("content", "")
