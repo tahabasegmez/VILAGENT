@@ -1777,10 +1777,16 @@ def _normalize_app_name(raw: str) -> str | None:
     text = raw.strip()
     verb = re.search(r"\b(?:open|launch|start|run)\b\s+(.+)", text, re.IGNORECASE)
     candidate = verb.group(1) if verb else text
-    # Keep only the app, dropping any trailing clause ("... and navigate to Gmail").
-    candidate = re.split(r"\b(?:and|then|to|in|with)\b|[,;]", candidate, maxsplit=1, flags=re.IGNORECASE)[0]
+    # Drop only a trailing ACTION clause that begins with a conjunction + a verb
+    # ("... and navigate to Gmail", "then open the file"). Crucially, do NOT split on a
+    # bare "to/in/with/and", which would wreck multi-word names like "Microsoft To Do".
+    candidate = re.split(
+        r"\s+(?:and|then|&|,)\s+(?:open|launch|start|run|go|navigate|visit|search|type|click|find|select|enter|add|create|write|set|check|read|press)\b",
+        candidate, maxsplit=1, flags=re.IGNORECASE,
+    )[0]
+    candidate = re.split(r"[;]|,\s", candidate, maxsplit=1)[0]
     # Drop filler words that are never part of an app/executable name.
-    candidate = re.sub(r"\b(?:the|a|an|browser|application|app|window|program)\b", " ", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"\b(?:the|a|an|browser|application|window|program)\b", " ", candidate, flags=re.IGNORECASE)
     candidate = " ".join(candidate.split()).strip(" .,:;\"'")
     return candidate or None
 
