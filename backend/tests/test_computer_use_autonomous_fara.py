@@ -166,7 +166,8 @@ async def test_autonomous_native_runs_until_terminate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_autonomous_reports_failure_on_fara_terminate_failure(monkeypatch):
-    _patch_common(monkeypatch, "browser", [_terminate("failure")])
+    # First failure is pushed back once; a repeated failure is honoured.
+    _patch_common(monkeypatch, "browser", [_terminate("failure"), _terminate("failure")])
     orch = AutonomousFaraOrchestrator(instruction_model_name="m", remote=object(), auto_approve_risk_threshold=RiskLevel.critical)
     fake = _FakeBrowserSession()
 

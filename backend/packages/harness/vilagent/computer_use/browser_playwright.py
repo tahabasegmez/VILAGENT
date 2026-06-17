@@ -184,7 +184,14 @@ class PlaywrightBrowserSession:
         # Drop --enable-automation so the "controlled by automated software" banner is gone.
         common["chromium_sandbox"] = True
         common["ignore_default_args"] = ["--enable-automation"]
-        extra_args = ["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"]
+        # --disable-background-mode so closing the window actually exits the browser
+        # instead of leaving it running as a lingering background "Browser" process.
+        extra_args = [
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-background-mode",
+        ]
 
         user_data_dir = self._user_data_dir or (_default_edge_user_data_dir() if self._use_user_profile else None)
         # Be forgiving about what the operator points at: if they gave the specific profile
@@ -235,6 +242,22 @@ class PlaywrightBrowserSession:
             self._context.set_default_timeout(self._nav_timeout_ms)
             self._page = await self._context.new_page()
         self._started = True
+
+    def on_close(self, callback) -> None:
+        """Register a callback fired when the browser window/context is closed."""
+        def _handler(*_args):
+            self._started = False
+            try:
+                callback()
+            except Exception:
+                pass
+        try:
+            if self._context is not None:
+                self._context.on("close", _handler)
+            if self._page is not None:
+                self._page.on("close", _handler)
+        except Exception:
+            pass
 
     def is_alive(self) -> bool:
         """True when the browser is still started with at least one open tab."""
@@ -477,8 +500,20 @@ async def get_shared_browser_session(
                 profile_directory=profile_directory,
             )
             await session.start()
+            # When the operator closes the window, fully tear down the shared session
+            # (stop the Playwright driver, null the global) so nothing lingers and the
+            # next task starts a clean browser.
+            session.on_close(_schedule_shared_cleanup)
             _shared_session = session
         return _shared_session
+
+
+def _schedule_shared_cleanup() -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(close_shared_browser_session())
 
 
 async def close_shared_browser_session() -> None:

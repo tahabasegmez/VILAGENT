@@ -201,6 +201,7 @@ How execution works (plan for THIS, do not micro-manage):
 - A deterministic step is executed exactly once by the runtime (no vision): launching an app, typing a known literal string, or pressing a known hotkey.
 
 Rules:
+- LANGUAGE: write EVERY "instruction" and "completion_criteria" value in ENGLISH ONLY, no matter what language the user wrote in. The executor (FARA) only reliably understands English, so never emit Turkish or any non-English text in those fields. You may keep proper nouns, exact text-to-type, URLs, and search queries verbatim. The "goal" field may restate the user's request (English preferred).
 - Plan, never execute. Do not ask for screenshots or session ids.
 - environment: 'native' Windows desktop UI, or 'browser' for anything on the web.
 - requires_vision: false ONLY when the command has an unambiguous keyboard, text-entry, UIA, or DOM equivalent (a fixed app launch, a known literal to type, or a fixed hotkey); true when the screen must be looked at. Prefer deterministic input steps over visual actions when the command is fixed and unambiguous; otherwise use a vision step.
@@ -241,11 +242,12 @@ _MAX_VISION_NOOPS = 3
 _MAX_VISION_NUDGES = 2
 
 _GENERIC_STUCK_NUDGE = (
-    "You repeated the same action with no visible effect. The target may be in a "
-    "different place, the page may have changed, the element may be off-screen, or "
-    "the click missed. Re-examine the screenshot carefully and try a clearly DIFFERENT "
-    "location or a different action (scroll the target into view, or click a different "
-    "element); do not repeat the previous coordinates."
+    "You repeated the same action several times. FIRST decide: is this step's goal "
+    "ALREADY satisfied on screen? If yes, return finish_step with status success right "
+    "now and stop. If not, the target may be elsewhere, the page may have changed, the "
+    "element may be off-screen, or the click missed — re-examine the screenshot and try "
+    "a clearly DIFFERENT location or action (scroll the target into view, or click a "
+    "different element). Do not repeat the previous coordinates."
 )
 
 
@@ -567,6 +569,7 @@ class ComputerUseStepExecutor:
         last_error_code: str | None = None
         model_calls = 0
         succeeded_any = False
+        failure_retries = 0
 
         for index in range(max_attempts + _MAX_VISION_NOOPS):
             if cancel_check and await cancel_check():
@@ -654,6 +657,18 @@ class ComputerUseStepExecutor:
 
                 if action.args.get("action") == "terminate":
                     if action.args.get("status") == "failure":
+                        # Push back once on a premature give-up before accepting failure.
+                        if failure_retries < 1:
+                            failure_retries += 1
+                            chat_history.append({
+                                "role": "user",
+                                "content": (
+                                    "<supervisor>\nDo not give up yet. Re-examine the screenshot and try a clearly "
+                                    "DIFFERENT approach to complete this step. Only return finish_step failure again "
+                                    "if it is truly impossible.\n</supervisor>"
+                                ),
+                            })
+                            continue
                         return session_id, StepExecutionResult(
                             step_id=step.step_id,
                             environment=step.environment,
@@ -731,6 +746,18 @@ class ComputerUseStepExecutor:
                             ),
                         })
                         continue
+                    if succeeded_any:
+                        # Real actions already succeeded; the model is just spinning at the
+                        # end. Treat the step as done rather than failing completed work.
+                        return session_id, StepExecutionResult(
+                            step_id=step.step_id,
+                            environment=step.environment,
+                            requires_vision=step.requires_vision,
+                            status=StepStatus.completed,
+                            action_id=last_action_id,
+                            action_status=ActionLifecycleStatus.succeeded,
+                            summary="Vision step completed (model kept repeating after the work succeeded).",
+                        )
                     return session_id, StepExecutionResult(
                         step_id=step.step_id,
                         environment=step.environment,
@@ -1047,6 +1074,7 @@ class ComputerUseStepExecutor:
         real_actions = 0
         model_calls = 0
         succeeded_any = False
+        failure_retries = 0
         last_error_code: str | None = None
         # Browser sub-goals are coarser (navigate, then act on the page), so allow more
         # actions before FARA must declare finish_step.
@@ -1099,6 +1127,17 @@ class ComputerUseStepExecutor:
                 op = action.args.get("action")
                 if op == "terminate":
                     if action.args.get("status") == "failure":
+                        if failure_retries < 1:
+                            failure_retries += 1
+                            chat_history.append({
+                                "role": "user",
+                                "content": (
+                                    "<supervisor>\nDo not give up yet. Re-examine the page and try a clearly DIFFERENT "
+                                    "approach to complete this step (navigate, scroll, dismiss an overlay, or click a "
+                                    "different element). Only return finish_step failure again if truly impossible.\n</supervisor>"
+                                ),
+                            })
+                            continue
                         return _failed("fara_terminate_failure", "Fara decided to terminate with failure")
                     return session_id, StepExecutionResult(
                         step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
@@ -1141,6 +1180,12 @@ class ComputerUseStepExecutor:
                             "content": f"<supervisor>\n{advice}\n</supervisor>\nDo exactly this now, then continue the original step.",
                         })
                         continue
+                    if succeeded_any:
+                        return session_id, StepExecutionResult(
+                            step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                            status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
+                            summary="Browser step completed (model kept repeating after the work succeeded).",
+                        )
                     return _failed("no_progress_repeated_action", "Vision model repeated the same action without making progress.")
 
                 real_actions += 1

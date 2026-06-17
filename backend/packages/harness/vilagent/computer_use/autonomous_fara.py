@@ -262,6 +262,7 @@ class AutonomousFaraOrchestrator:
         nudges = 0
         model_errors = 0
         actions_done = 0
+        failure_retries = 0
         last_error: str | None = None
         budget = self._max_actions
 
@@ -308,6 +309,21 @@ class AutonomousFaraOrchestrator:
             op = action.args.get("action")
             if op == "terminate":
                 if action.args.get("status") == "failure":
+                    # Don't accept the first give-up: push back once so FARA tries a
+                    # different approach. Only honour a repeated failure decision.
+                    if failure_retries < 1:
+                        failure_retries += 1
+                        chat_history.append({
+                            "role": "user",
+                            "content": (
+                                "<supervisor>\nDo not give up yet. Re-examine the current screenshot and try a "
+                                "clearly DIFFERENT approach to make progress on the task. Only return finish_step "
+                                "failure again if it is truly impossible.\n</supervisor>"
+                            ),
+                        })
+                        if on_activity_update:
+                            on_activity_update(role, "FARA tried to give up; nudging it to try a different approach.", thought)
+                        continue
                     return StepStatus.failed, "FARA terminated the task with failure.", "fara_terminate_failure"
                 return StepStatus.completed, f"FARA completed the task after {actions_done} action(s).", None
             if action.kind == ActionKind.browser_action and op in {"wait", "mouse_move"}:

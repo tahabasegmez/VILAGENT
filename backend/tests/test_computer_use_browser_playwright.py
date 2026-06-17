@@ -120,6 +120,9 @@ async def test_shared_browser_session_persists_and_recreates_when_dead(monkeypat
         async def start(self):
             self.started = True
 
+        def on_close(self, callback):
+            pass
+
         def is_alive(self):
             return self.alive
 

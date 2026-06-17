@@ -57,7 +57,12 @@ def pyautogui_click(x: int, y: int) -> None:
 
 
 def pyautogui_double_click(x: int, y: int) -> None:
-    _pyautogui().doubleClick(x=x, y=y)
+    pg = _pyautogui()
+    # Move first, then two explicit clicks with a short, double-click-speed interval.
+    # This is more reliable across apps than pyautogui.doubleClick(), which some
+    # Win32 controls fail to register as a real double-click.
+    pg.moveTo(x, y)
+    pg.click(x=x, y=y, clicks=2, interval=0.08)
 
 
 def pyautogui_right_click(x: int, y: int) -> None:
