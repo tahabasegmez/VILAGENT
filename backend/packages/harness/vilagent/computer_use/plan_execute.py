@@ -77,7 +77,7 @@ class ComputerUsePlanStep(BaseModel):
     step_id: str
     instruction: str = Field(min_length=1)
     completion_criteria: str = Field(default="The instructed command has completed.", min_length=1)
-    max_actions: int = Field(default=6, ge=1, le=12)
+    max_actions: int = Field(default=8, ge=1, le=16)
     environment: EnvironmentContext = EnvironmentContext.native
     requires_vision: bool = True
     action_kind: ActionKind | None = None
@@ -190,7 +190,7 @@ class JsonLLMPlanner:
 
 _PLANNER_SYSTEM_PROMPT = """\
 You are the VILAGENT computer-use planner. Output ONLY one JSON object:
-{"goal":"...","steps":[{"step_id":"s1","instruction":"a clear sub-goal","completion_criteria":"one observable proof this sub-goal is done","max_actions":6,"environment":"browser|native","requires_vision":true,"action_kind":"click|type_text|hotkey|launch_app|browser_action","target_description":"...","selector_hints":{},"args":{},"risk":{"level":"low|medium|high|critical","reasons":["..."],"consequences":["..."]},"requires_verification":true}]}
+{"goal":"...","steps":[{"step_id":"s1","instruction":"a clear sub-goal","completion_criteria":"one observable proof this sub-goal is done","max_actions":8,"environment":"browser|native","requires_vision":true,"action_kind":"click|type_text|hotkey|launch_app|browser_action","target_description":"...","selector_hints":{},"args":{},"risk":{"level":"low|medium|high|critical","reasons":["..."],"consequences":["..."]},"requires_verification":true}]}
 
 How execution works (plan for THIS, do not micro-manage):
 - A vision step is handed to FARA, a capable GUI agent that SEES the screen and performs AS MANY actions as the sub-goal needs (look, click, type, press keys, scroll, dismiss a popup, retry) until the step's completion_criteria is met. So a vision step should be a MEANINGFUL SUB-GOAL, not a single click. FARA handles the small motor actions, focus moves, autocomplete confirmations, and obstructions on its own — you do NOT need a separate step for every click or key press.
@@ -206,7 +206,7 @@ Rules:
 - Keep steps at the SUB-GOAL altitude: one coherent outcome per step (e.g. "compose and send an email to alice@x.com with subject S and body B", "log in with these credentials", "add item I to the cart"). Do not split a single coherent interaction into one-click steps, and do not bundle unrelated goals into one step. Put a genuine verification/decision (e.g. "confirm the order total is correct before paying") in its own step.
 - Write each step's instruction in 1-3 plain sentences: WHAT outcome to reach, the concrete specifics (names, exact text, URLs, values, order), and how to recognise success. Include autocomplete/confirmation hints when relevant (e.g. "after typing the recipient, press Enter to pick the highlighted suggestion before moving on"). Be specific; never vague ("handle the page") and never padded.
 - Put known values in args (app_name, text, keys, url) and canonical hotkeys (ENTER, ESC, CTRL+L) in args.keys. Set completion_criteria to the exact observable end state.
-- max_actions: how many actions FARA may take for that sub-goal (6 typical; up to 10-12 for multi-field forms or pages with overlays/loading). It is a budget, not a command count.
+- max_actions: how many actions FARA may take for that sub-goal (8 typical; up to 12-16 for multi-field forms or pages with overlays/loading). It is a budget, not a command count.
 - Use context.windows_ui_language for localized controls. Assess risk per step (critical = the UI's Very High).
 - Up to 12 steps; prefer fewer, well-scoped sub-goals.
 """
@@ -550,10 +550,10 @@ class ComputerUseStepExecutor:
         real_actions = 0
         # Multi-action budget: the step may need several actions before FARA declares
         # finish_step (e.g. focus a field, then type, then confirm). Give a generous cap.
-        max_attempts = max(1, min(max_actions, 10))
+        max_attempts = max(1, min(max_actions, 12))
         if self._vision_recovery:
             # Give the supervisor-guided retries room beyond the base action budget.
-            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 12)
+            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 14)
         last_action_id = ""
         last_status = ActionLifecycleStatus.failed
         last_error_code: str | None = None
@@ -1042,9 +1042,9 @@ class ComputerUseStepExecutor:
         last_error_code: str | None = None
         # Browser sub-goals are coarser (navigate, then act on the page), so allow more
         # actions before FARA must declare finish_step.
-        max_attempts = max(1, min(max_actions, 12))
+        max_attempts = max(1, min(max_actions, 16))
         if self._vision_recovery:
-            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 14)
+            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 18)
 
         def _failed(error_code: str, summary: str) -> tuple[str, StepExecutionResult]:
             return session_id, StepExecutionResult(
@@ -1554,8 +1554,9 @@ def _vision_step_command(step: ComputerUsePlanStep, *, max_actions: int | None =
 
 def _vision_action_limit(step: ComputerUsePlanStep, configured_vision_calls: int) -> int:
     # The planner's per-step max_actions is the budget for that sub-goal, clamped to a
-    # sane multi-action range. Browser sub-goals get a little more headroom.
-    cap = 12 if step.environment == EnvironmentContext.browser else 10
+    # sane multi-action range. Plan-execute runs a bit more generously than the typical
+    # budget; browser sub-goals get extra headroom over native ones.
+    cap = 16 if step.environment == EnvironmentContext.browser else 12
     return max(4, min(step.max_actions, cap))
 
 

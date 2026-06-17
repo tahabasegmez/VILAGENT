@@ -120,8 +120,8 @@ def test_vision_action_limit_gives_multi_action_headroom():
     browser_big = ComputerUsePlanStep(step_id="s3", instruction="click", environment="browser", max_actions=12, risk={"level": RiskLevel.low})
 
     assert _vision_action_limit(native_small, 10) == 4
-    assert _vision_action_limit(native_big, 10) == 10  # native capped at 10
-    assert _vision_action_limit(browser_big, 10) == 12  # browser capped at 12
+    assert _vision_action_limit(native_big, 10) == 12  # native capped at 12
+    assert _vision_action_limit(browser_big, 10) == 12  # browser cap is 16; step asked for 12
 
 
 def test_fara_prompt_reserves_coordinates_for_pointer_actions():
