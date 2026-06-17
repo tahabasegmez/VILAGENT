@@ -2,6 +2,7 @@
   "text_provider": "ollama",
   "execution_mode": "vision_only",
   "vision_provider": "fara",
-  "vision_recovery": true,
-  "supervisor_source": "api"
+  "vision_recovery": false,
+  "supervisor_source": "api",
+  "agent_approach": "autonomous"
 }

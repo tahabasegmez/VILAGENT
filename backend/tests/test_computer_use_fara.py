@@ -95,10 +95,9 @@ def test_vision_step_command_forbids_later_steps_and_double_checks():
         )
     )
 
-    assert "CURRENT STEP ONLY" in command
+    assert "CURRENT STEP" in command
     assert "finish_step success" in command
-    assert "Do not perform any later step or double-check" in command
-    assert "After at most 4 action(s)" in command
+    assert "pursue a later step / different user goal" in command
     assert "popups, dialogs, cookie banners" in command
     assert "smallest safe action" in command
     assert "ACTION KIND:" in command
@@ -106,13 +105,23 @@ def test_vision_step_command_forbids_later_steps_and_double_checks():
     assert "ACTION ARGUMENTS:" in command
 
 
-def test_vision_action_limit_adds_recovery_reserve_and_keeps_hard_cap():
-    one_action = ComputerUsePlanStep(step_id="s1", instruction="click", max_actions=1, risk={"level": RiskLevel.low})
-    six_actions = ComputerUsePlanStep(step_id="s2", instruction="click", max_actions=6, risk={"level": RiskLevel.low})
+def test_vision_step_command_browser_blank_page_prompts_navigation():
+    command = _vision_step_command(
+        ComputerUsePlanStep(step_id="s1", instruction="search the site", environment="browser", risk={"level": RiskLevel.low}),
+        current_url="about:blank",
+    )
+    assert "blank page" in command
+    assert "visit_url" in command
 
-    assert _vision_action_limit(one_action, 10) == 4
-    assert _vision_action_limit(six_actions, 10) == 6
-    assert _vision_action_limit(six_actions, 3) == 3
+
+def test_vision_action_limit_gives_multi_action_headroom():
+    native_small = ComputerUsePlanStep(step_id="s1", instruction="click", max_actions=4, risk={"level": RiskLevel.low})
+    native_big = ComputerUsePlanStep(step_id="s2", instruction="click", max_actions=12, risk={"level": RiskLevel.low})
+    browser_big = ComputerUsePlanStep(step_id="s3", instruction="click", environment="browser", max_actions=12, risk={"level": RiskLevel.low})
+
+    assert _vision_action_limit(native_small, 10) == 4
+    assert _vision_action_limit(native_big, 10) == 10  # native capped at 10
+    assert _vision_action_limit(browser_big, 10) == 12  # browser capped at 12
 
 
 def test_fara_prompt_reserves_coordinates_for_pointer_actions():
@@ -251,7 +260,7 @@ async def test_fara_loop_waits_for_action_approval_before_continuing(monkeypatch
     )
 
     assert result.status == StepStatus.completed
-    assert result.summary == "Vision step completed after its single command succeeded."
+    assert result.summary == "Fara completed the step successfully"
 
     assert remote.get_action_calls == 1
     assert remote.execute_calls == 1
@@ -545,10 +554,10 @@ async def test_fara_loop_makes_final_failed_decision_at_hard_action_cap(monkeypa
         max_actions=10,
     )
 
-    assert remote.submit_calls == 6
+    assert remote.submit_calls == 10
     assert result.status == StepStatus.failed
     assert result.error_code == "step_uncertain_after_action_limit"
-    assert result.summary == "Step failed after 6 action(s) because the model could not verify completion (postcondition_failed)."
+    assert result.summary == "Step failed after 10 action(s) because the model could not verify completion (postcondition_failed)."
 
 
 @pytest.mark.asyncio

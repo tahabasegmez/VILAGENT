@@ -30,6 +30,58 @@ def test_enabled_physical_click_uses_bounded_target_center():
     assert calls == [(13, 24)]
 
 
+def _coord_action(kind):
+    return ActionCommand(
+        action_id="a", session_id="s", kind=kind,
+        target=TargetRef(strategy=TargetStrategy.coordinate, bounds=Rect(x=10, y=20, width=6, height=8), confidence=1, observation_id="obs-1"),
+        args={"amount": -200} if kind == ActionKind.scroll else {},
+    )
+
+
+def test_enabled_physical_double_right_scroll_dispatch_to_their_injectors():
+    calls = []
+    provider = WindowsPhysicalInputProvider(
+        enabled=True,
+        click_injector=lambda x, y: calls.append(("click", x, y)),
+        double_click_injector=lambda x, y: calls.append(("double", x, y)),
+        right_click_injector=lambda x, y: calls.append(("right", x, y)),
+        scroll_injector=lambda x, y, amount: calls.append(("scroll", x, y, amount)),
+    )
+
+    assert asyncio.run(provider.execute(_coord_action(ActionKind.double_click))).succeeded is True
+    assert asyncio.run(provider.execute(_coord_action(ActionKind.right_click))).succeeded is True
+    assert asyncio.run(provider.execute(_coord_action(ActionKind.scroll))).succeeded is True
+
+    assert ("double", 13, 24) in calls
+    assert ("right", 13, 24) in calls
+    assert ("scroll", 13, 24, -200) in calls
+
+
+def test_routed_provider_sends_coordinate_double_click_to_physical_provider():
+    class Provider:
+        def __init__(self, name, supported_actions=None):
+            self.name = name
+            self.calls = []
+            if supported_actions is not None:
+                self.supported_actions = supported_actions
+
+        async def execute(self, action):
+            self.calls.append(action)
+            from vilagent.computer_use.models import NativeActionResult
+
+            return NativeActionResult(succeeded=True, details={"provider": self.name})
+
+    semantic = Provider("semantic")
+    physical = Provider("physical", {ActionKind.click, ActionKind.double_click})
+    routed = WindowsRoutedActionProvider(semantic, physical)
+
+    result = asyncio.run(routed.execute(_coord_action(ActionKind.double_click)))
+
+    assert result.details["provider"] == "physical"
+    assert semantic.calls == []
+    assert len(physical.calls) == 1
+
+
 def test_routed_provider_sends_coordinate_only_to_physical_provider():
     class Provider:
         def __init__(self, name):

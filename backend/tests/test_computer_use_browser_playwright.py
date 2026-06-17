@@ -161,6 +161,8 @@ class _FakeRemoteMin:
 
 
 class _FakeSession:
+    current_url = "https://example.com"
+
     def __init__(self):
         self.ran: list[ActionCommand] = []
         self.shots = 0
@@ -202,6 +204,8 @@ async def test_deterministic_browser_step_runs_once_on_session(monkeypatch):
 async def test_vision_browser_step_drives_fara_against_session(monkeypatch):
     monkeypatch.setattr("vilagent.computer_use.plan_execute.get_app_config", lambda: _browser_config())
 
+    terminate = ActionCommand(action_id="t", session_id="", kind=ActionKind.browser_action, args={"action": "terminate", "status": "success"})
+
     class _FakeProvider:
         def __init__(self, *a, **k):
             self.calls = 0
@@ -209,7 +213,10 @@ async def test_vision_browser_step_drives_fara_against_session(monkeypatch):
         async def get_next_action(self, **kwargs):
             assert kwargs["environment"] == "browser"
             self.calls += 1
-            return _coord_action(ActionKind.click, 100, 200), [{"role": "assistant", "content": "clicked"}]
+            # Multi-action: do one click, then declare the step finished.
+            if self.calls == 1:
+                return _coord_action(ActionKind.click, 100, 200), [{"role": "assistant", "content": "clicked"}]
+            return terminate, [{"role": "assistant", "content": "done"}]
 
     async def _fake_detect(cache, base_url, api_key, default_model, *, detector=None):
         return default_model

@@ -77,7 +77,7 @@ class ComputerUsePlanStep(BaseModel):
     step_id: str
     instruction: str = Field(min_length=1)
     completion_criteria: str = Field(default="The instructed command has completed.", min_length=1)
-    max_actions: int = Field(default=4, ge=1, le=6)
+    max_actions: int = Field(default=6, ge=1, le=12)
     environment: EnvironmentContext = EnvironmentContext.native
     requires_vision: bool = True
     action_kind: ActionKind | None = None
@@ -190,30 +190,25 @@ class JsonLLMPlanner:
 
 _PLANNER_SYSTEM_PROMPT = """\
 You are the VILAGENT computer-use planner. Output ONLY one JSON object:
-{"goal":"...","steps":[{"step_id":"s1","instruction":"one exact command","completion_criteria":"one observable proof this command finished","max_actions":4,"environment":"browser|native","requires_vision":true,"action_kind":"click|type_text|hotkey|launch_app|browser_action","target_description":"...","selector_hints":{},"args":{},"risk":{"level":"low|medium|high|critical","reasons":["..."],"consequences":["..."]},"requires_verification":true}]}
+{"goal":"...","steps":[{"step_id":"s1","instruction":"a clear sub-goal","completion_criteria":"one observable proof this sub-goal is done","max_actions":6,"environment":"browser|native","requires_vision":true,"action_kind":"click|type_text|hotkey|launch_app|browser_action","target_description":"...","selector_hints":{},"args":{},"risk":{"level":"low|medium|high|critical","reasons":["..."],"consequences":["..."]},"requires_verification":true}]}
+
+How execution works (plan for THIS, do not micro-manage):
+- A vision step is handed to FARA, a capable GUI agent that SEES the screen and performs AS MANY actions as the sub-goal needs (look, click, type, press keys, scroll, dismiss a popup, retry) until the step's completion_criteria is met. So a vision step should be a MEANINGFUL SUB-GOAL, not a single click. FARA handles the small motor actions, focus moves, autocomplete confirmations, and obstructions on its own — you do NOT need a separate step for every click or key press.
+- A deterministic step is executed exactly once by the runtime (no vision): launching an app, typing a known literal string, or pressing a known hotkey.
+
 Rules:
 - Plan, never execute. Do not ask for screenshots or session ids.
-- One step = exactly one user-visible command. Put every check / verify / retry / sort-direction decision in its OWN step; never bundle execution and double-checking.
-- environment: 'native' Windows UI or 'browser'.
-- requires_vision: false only when the command has an unambiguous keyboard / UIA / DOM equivalent (keyboard, text-entry, UIA, or DOM equivalent); true when visual understanding of the screen is needed. Prefer deterministic input steps over visual actions. Prefer deterministic over visual.
-- To enter text, numbers, or a calculation, use ONE type_text step: action_kind="type_text", requires_vision=false, and put the exact literal string (with symbols like + - * / =) in args.text. The keyboard types it directly into the focused field; NEVER spell it out by visually clicking on-screen keys or buttons. Add a separate step to focus the field first only if it is not already focused.
-- To open an app, use ONE launch_app step (action_kind="launch_app", requires_vision=false) and set args.app_name to the app's Windows EXECUTABLE name (the short command you would type in the Run dialog). Give a single launchable name, NEVER a sentence, URL, or goal. The runtime launches the executable (also via App Paths / Start search), so a correct exe name is the most reliable. Launching and navigating are ALWAYS separate steps.
-- WEB / BROWSER tasks run in a dedicated browser the runtime manages for you. Do NOT plan a launch_app step to open a browser (Edge/Chrome) and do NOT switch to the desktop for web work. Mark every web step environment="browser". The FIRST browser step opens the managed browser automatically. To go to a page use action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL, as its own step. Everything inside a web page (clicking links/buttons, typing in fields, scrolling, reading) is a browser step; the browser is driven directly (real DOM mouse/keyboard), so coordinates and typing are reliable.
-- Plan the TRANSITIONS between steps, not only the actions. Spell it out simply: after one step finishes, the cursor/focus is somewhere; to do the next thing you must FIRST move focus there. Never assume the cursor is already in the right place, and never rely on the vision model to find and click each field. So whenever two consecutive steps touch different fields, controls, or regions, add an explicit deterministic step that moves focus first — a hotkey step (action_kind="hotkey", requires_vision=false, e.g. args.keys="TAB" for the next field, "ENTER" to confirm, or arrow keys) or a focus/click step — BEFORE the next action. Short examples (not one specific app):
-    Email: type the recipient -> hotkey ENTER (commit the address / pick the highlighted suggestion) -> hotkey TAB (move to Subject) -> type Subject -> hotkey TAB (move to Body) -> type Body -> click Send.
-    Login form: type username -> hotkey TAB -> type password -> hotkey ENTER.
-    Save As dialog: type the file name -> hotkey ENTER.
-    Spreadsheet: type a cell value -> hotkey TAB (next cell right) or ENTER (cell below).
-  Pick the correct key(s) for that app's focus order.
-- Autocomplete / suggestion fields (email recipient, search box, address bar) pop up a suggestion list while you type. CONFIRM the entry with its OWN hotkey ENTER step (commits the value / picks the suggestion) BEFORE moving to the next field — do NOT assume a single TAB both picks the suggestion and advances; that is the most common mistake.
-- Do not move by rote: if a step's outcome depends on a popup, dropdown, suggestion list, or dialog that may or may not appear (so a fixed key press is not guaranteed correct), make THAT step requires_vision=true so the executor looks at the screen and adapts, instead of blindly pressing keys. State in completion_criteria the exact on-screen result to confirm (e.g. "the recipient appears as a chip in the To field").
-- max_actions: bounded executor budget for that one command (4 typical for visual steps, 5-6 when popups, overlays, loading states, focus mismatch, localization, or other recoverable UI variance may appear, never >6); it does not permit merging commands.
-- Make MANY small, separate steps rather than a few broad ones: one click, one type, one hotkey, one navigation, one wait per step. If a step could be split into two, split it. More short steps is better than one big step.
-- Write each step's instruction like explaining to a beginner who can only see the screen: in 1-2 short, plain sentences say WHAT to do, WHERE (the exact target and how to recognise it on screen — its label, color, position, or nearby text), and HOW (click / type / which key). Be explicit and unambiguous; do not be vague ("handle the page") and do not pad with filler.
-- Executor-ready steps: name the target and its expected current state, the exact interaction mechanism, known args/selector_hints, and the observable end state. No vague "navigate to the website" when a URL/browser action is known. Put app_name/text/keys/url in args when known; for hotkeys put canonical keys (ENTER, ESC, CTRL+L) in args.keys.
-- Separate any known preparation (focus a field, clear content, dismiss an obstruction) into its own step. If an obstruction is only possible but not guaranteed, give the affected visual step enough max_actions for the executor to dismiss or bypass it before completing the same command.
+- environment: 'native' Windows desktop UI, or 'browser' for anything on the web.
+- requires_vision: false ONLY when the command has an unambiguous keyboard, text-entry, UIA, or DOM equivalent (a fixed app launch, a known literal to type, or a fixed hotkey); true when the screen must be looked at. Prefer deterministic input steps over visual actions when the command is fixed and unambiguous; otherwise use a vision step.
+- To open a desktop app, use ONE launch_app step (action_kind="launch_app", requires_vision=false) with args.app_name set to the app's Windows EXECUTABLE name (the short command you would type in the Run dialog). Give a single launchable name, NEVER a sentence, URL, or goal.
+- To type a fixed literal (a known number, code, or exact text) into an already-focused field, you may use a deterministic type_text step (action_kind="type_text", requires_vision=false, exact string with its symbols in args.text). When the field must first be found/focused on screen, fold the whole "click the field and type X" into a single vision step instead.
+- WEB / BROWSER tasks run in a dedicated browser the runtime manages for you. Do NOT plan a launch_app step to open a browser, and do NOT switch to the desktop for web work. Mark every web step environment="browser". Make the FIRST browser step a navigation: action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL. After that, each browser step is a page sub-goal (e.g. "search for X and open the first result", "fill the login form with user U and password P and submit") that FARA carries out by acting on the real page.
+- Keep steps at the SUB-GOAL altitude: one coherent outcome per step (e.g. "compose and send an email to alice@x.com with subject S and body B", "log in with these credentials", "add item I to the cart"). Do not split a single coherent interaction into one-click steps, and do not bundle unrelated goals into one step. Put a genuine verification/decision (e.g. "confirm the order total is correct before paying") in its own step.
+- Write each step's instruction in 1-3 plain sentences: WHAT outcome to reach, the concrete specifics (names, exact text, URLs, values, order), and how to recognise success. Include autocomplete/confirmation hints when relevant (e.g. "after typing the recipient, press Enter to pick the highlighted suggestion before moving on"). Be specific; never vague ("handle the page") and never padded.
+- Put known values in args (app_name, text, keys, url) and canonical hotkeys (ENTER, ESC, CTRL+L) in args.keys. Set completion_criteria to the exact observable end state.
+- max_actions: how many actions FARA may take for that sub-goal (6 typical; up to 10-12 for multi-field forms or pages with overlays/loading). It is a budget, not a command count.
 - Use context.windows_ui_language for localized controls. Assess risk per step (critical = the UI's Very High).
-- Up to 16 concise steps.
+- Up to 12 steps; prefer fewer, well-scoped sub-goals.
 """
 
 
@@ -553,14 +548,17 @@ class ComputerUseStepExecutor:
         supervisor_calls = 0
         nudge_count = 0
         real_actions = 0
-        max_attempts = max(1, min(max_actions, 6))
+        # Multi-action budget: the step may need several actions before FARA declares
+        # finish_step (e.g. focus a field, then type, then confirm). Give a generous cap.
+        max_attempts = max(1, min(max_actions, 10))
         if self._vision_recovery:
             # Give the supervisor-guided retries room beyond the base action budget.
-            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 8)
+            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 12)
         last_action_id = ""
         last_status = ActionLifecycleStatus.failed
         last_error_code: str | None = None
         model_calls = 0
+        succeeded_any = False
 
         for index in range(max_attempts + _MAX_VISION_NOOPS):
             if cancel_check and await cancel_check():
@@ -772,15 +770,26 @@ class ComputerUseStepExecutor:
                 last_action_id = action.action_id
 
                 if last_status == ActionLifecycleStatus.succeeded:
-                    return session_id, StepExecutionResult(
-                        step_id=step.step_id,
-                        environment=step.environment,
-                        requires_vision=step.requires_vision,
-                        status=StepStatus.completed,
-                        action_id=last_action_id,
-                        action_status=last_status,
-                        summary="Vision step completed after its single command succeeded.",
-                    )
+                    # Multi-action step: a successful action does NOT end the step. FARA
+                    # keeps going (observe -> act) until it emits finish_step, its own
+                    # completion signal. The provider already fed a success tool_response
+                    # into chat_history, so just continue. Only a spent budget ends it.
+                    succeeded_any = True
+                    repeated_signature = None
+                    repeated_count = 0
+                    if on_activity_update:
+                        on_activity_update("vision_executor", f"Action {real_actions} done; continuing the step.", thought)
+                    if real_actions >= max_attempts:
+                        return session_id, StepExecutionResult(
+                            step_id=step.step_id,
+                            environment=step.environment,
+                            requires_vision=step.requires_vision,
+                            status=StepStatus.completed,
+                            action_id=last_action_id,
+                            action_status=last_status,
+                            summary=f"Vision step reached its {max_attempts}-action budget after successful actions.",
+                        )
+                    continue
 
                 if last_status == ActionLifecycleStatus.uncertain:
                     last_error_code = outcome.error.code if outcome.error is not None else "postcondition_failed"
@@ -881,6 +890,19 @@ class ComputerUseStepExecutor:
                     summary=f"fara loop failed: {exc}",
                 )
         
+        # Budget/noop headroom exhausted without an explicit finish_step. If real
+        # actions succeeded along the way, treat the step as completed (the work
+        # happened, FARA just never declared done); otherwise report the last error.
+        if succeeded_any:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id,
+                environment=step.environment,
+                requires_vision=step.requires_vision,
+                status=StepStatus.completed,
+                action_id=last_action_id,
+                action_status=ActionLifecycleStatus.succeeded,
+                summary="Vision step ended after its successful actions (no explicit finish_step).",
+            )
         status = _step_status_from_action(last_status)
         return session_id, StepExecutionResult(
             step_id=step.step_id,
@@ -918,9 +940,27 @@ class ComputerUseStepExecutor:
                 summary=f"Could not start the browser: {_exception_summary(exc)}",
             )
 
-        # The Playwright browser IS the browser, so a "launch the browser" step is a
-        # no-op success rather than a desktop app launch.
+        # The Playwright browser IS the browser, so a "launch the browser" step is not a
+        # desktop app launch. If the step (or its instruction) carries a URL, navigate to
+        # it now so the browser does not sit on about:blank; otherwise it is a no-op.
         if action_kind == ActionKind.launch_app:
+            url = _first_url(step.args.get("url"), step.target_description, step.instruction)
+            if url:
+                action = ActionCommand(
+                    action_id=f"browser-step-{step.step_id}-{uuid.uuid4().hex}",
+                    session_id=session_id, kind=ActionKind.browser_action,
+                    args={"action": "visit_url", "url": url}, risk=_action_risk(step),
+                )
+                if on_activity_update:
+                    on_activity_update("browser_executor", f"Opening {url}", None)
+                ok, err = await session.run_action(action)
+                return session_id, StepExecutionResult(
+                    step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                    status=StepStatus.completed if ok else StepStatus.failed,
+                    action_id=action.action_id,
+                    action_status=ActionLifecycleStatus.succeeded if ok else ActionLifecycleStatus.failed,
+                    error_code=None if ok else err, summary=f"visit_url {url} -> {'ok' if ok else err}",
+                )
             return session_id, StepExecutionResult(
                 step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
                 status=StepStatus.completed, summary="Browser is managed by Playwright; no app launch needed.",
@@ -998,10 +1038,13 @@ class ComputerUseStepExecutor:
         nudge_count = 0
         real_actions = 0
         model_calls = 0
+        succeeded_any = False
         last_error_code: str | None = None
-        max_attempts = max(1, min(max_actions, 6))
+        # Browser sub-goals are coarser (navigate, then act on the page), so allow more
+        # actions before FARA must declare finish_step.
+        max_attempts = max(1, min(max_actions, 12))
         if self._vision_recovery:
-            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 8)
+            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 14)
 
         def _failed(error_code: str, summary: str) -> tuple[str, StepExecutionResult]:
             return session_id, StepExecutionResult(
@@ -1022,7 +1065,7 @@ class ComputerUseStepExecutor:
                 try:
                     model_calls += 1
                     action, new_history = await provider.get_next_action(
-                        instruction=_vision_step_command(step, max_actions=max_attempts),
+                        instruction=_vision_step_command(step, max_actions=max_attempts, current_url=session.current_url),
                         image_base64=image_base64,
                         chat_history=chat_history,
                         environment="browser",
@@ -1095,11 +1138,19 @@ class ComputerUseStepExecutor:
                 real_actions += 1
                 ok, err = await session.run_action(action)
                 if ok:
-                    return session_id, StepExecutionResult(
-                        step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
-                        status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
-                        summary="Browser step completed after its single command succeeded.",
-                    )
+                    # Multi-action step: keep going until FARA emits finish_step.
+                    succeeded_any = True
+                    repeated_signature = None
+                    repeated_count = 0
+                    if on_activity_update:
+                        on_activity_update("browser_executor", f"Action {real_actions} done; continuing the step.", thought)
+                    if real_actions >= max_attempts:
+                        return session_id, StepExecutionResult(
+                            step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                            status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
+                            summary=f"Browser step reached its {max_attempts}-action budget after successful actions.",
+                        )
+                    continue
                 last_error_code = err
                 if real_actions >= max_attempts:
                     return _failed("browser_step_failed", f"Browser step failed after {max_attempts} action(s) ({err}).")
@@ -1110,6 +1161,12 @@ class ComputerUseStepExecutor:
             except Exception as exc:
                 return _failed(exc.__class__.__name__, f"browser loop failed: {exc}")
 
+        if succeeded_any:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
+                summary="Browser step ended after its successful actions (no explicit finish_step).",
+            )
         return _failed(last_error_code or "browser_step_incomplete", f"Browser vision loop ended ({last_error_code}).")
 
     async def _ensure_session(self, session_id: str | None) -> str:
@@ -1467,28 +1524,52 @@ def _action_risk(step: ComputerUsePlanStep) -> RiskAssessment:
     return RiskAssessment.model_validate(step.risk.model_dump(mode="python"))
 
 
-def _vision_step_command(step: ComputerUsePlanStep, *, max_actions: int | None = None) -> str:
+def _vision_step_command(step: ComputerUsePlanStep, *, max_actions: int | None = None, current_url: str | None = None, goal: str | None = None) -> str:
     resolved_max_actions = max_actions or step.max_actions
+    context_lines = ""
+    if goal:
+        context_lines += f"OVERALL GOAL (for context only): {goal}\n"
+    if current_url is not None:
+        where = current_url or "about:blank (a blank page)"
+        context_lines += f"CURRENT PAGE: {where}\n"
+        if not current_url or current_url == "about:blank":
+            context_lines += "The browser is on a blank page; if this step needs a website, FIRST navigate there with browser_action visit_url before anything else.\n"
     return (
-        f"CURRENT STEP ONLY: {step.instruction}\n"
+        f"CURRENT STEP: {step.instruction}\n"
+        f"{context_lines}"
         f"MAXIMUM ACTIONS FOR THIS STEP: {resolved_max_actions}\n"
         f"ACTION KIND: {step.action_kind.value if step.action_kind else 'infer from instruction'}\n"
         f"TARGET: {step.target_description or 'described by the instruction'}\n"
         f"SELECTOR HINTS: {json.dumps(step.selector_hints, ensure_ascii=False)}\n"
         f"ACTION ARGUMENTS: {json.dumps(step.args, ensure_ascii=False)}\n"
         f"COMPLETION CRITERION: {step.completion_criteria}\n"
-        "Reason from the current screenshot. The UI may differ from the ideal path: popups, dialogs, cookie banners, ads, loading states, focus mismatch, localized labels, or disabled/covered controls may appear. "
+        "Reason from the current screenshot and perform as many actions as needed to accomplish THIS step (e.g. focus a field, type, then confirm). "
+        "The UI may differ from the ideal path: popups, dialogs, cookie banners, ads, loading states, focus mismatch, localized labels, or disabled/covered controls may appear. "
         "If such a recoverable obstruction directly blocks this step, use the smallest safe action to dismiss, wait for, or bypass it, then continue this same step. "
-        "Do not interact with unrelated content or choose a different user goal. "
-        "Stop immediately with finish_step success when the completion criterion is satisfied. "
-        "Do not perform any later step or double-check. "
-        f"After at most {resolved_max_actions} action(s), return an ultimate finish_step success or failure decision."
+        "Do not interact with unrelated content or pursue a later step / different user goal. "
+        "Return finish_step success as soon as THIS step's completion criterion is satisfied; return finish_step failure if it cannot be done. "
+        f"You have at most {resolved_max_actions} action(s) for this step."
     )
 
 
 def _vision_action_limit(step: ComputerUsePlanStep, configured_vision_calls: int) -> int:
-    configured_limit = configured_vision_calls or 1
-    return max(1, min(max(step.max_actions, 4), configured_limit, 6))
+    # The planner's per-step max_actions is the budget for that sub-goal, clamped to a
+    # sane multi-action range. Browser sub-goals get a little more headroom.
+    cap = 12 if step.environment == EnvironmentContext.browser else 10
+    return max(4, min(step.max_actions, cap))
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+
+
+def _first_url(*candidates: Any) -> str | None:
+    for candidate in candidates:
+        if not candidate:
+            continue
+        match = _URL_RE.search(str(candidate))
+        if match:
+            return match.group(0).rstrip(".,;)")
+    return None
 
 
 def _rescale_action_for_screen(action: ActionCommand, scale: float) -> ActionCommand:
