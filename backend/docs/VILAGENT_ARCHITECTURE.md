@@ -318,15 +318,15 @@ Gateway CSRF cookie/header pair.
    owner. Migrate lifecycle and action operations before making that mode the
    production default, then add guarded input injection and broader mandatory
    focus policy.
-2. Target providers: connect application integrations, browser-use, UI-TARS,
-   and guarded coordinate adapters alongside the implemented Windows UIA
-   provider.
+2. Target providers: connect application integrations, the Playwright browser
+   controller, and pyautogui coordinate adapters alongside the implemented
+   Windows UIA provider.
 3. Planner/subagents: Gemini-based planning, specialist computer-use
    subagents, budgets, and skill discovery.
 4. Gateway and Electron: consume lifecycle SSE, add live observations, main
    workspace, approval UI, clarification, and floating control surface.
-5. Remote vision: UI-TARS served from Colab A100 through vLLM and an ephemeral
-   Cloudflare tunnel, with health checks and strict image/token budgets.
+5. Remote vision: FARA-7B served from Colab A100 through vLLM and an ephemeral
+   Cloudflare/ngrok tunnel, with health checks and strict image/token budgets.
 
 Multi-monitor support is deferred, but monitor identity and bounds are already
 part of observation and target contracts.

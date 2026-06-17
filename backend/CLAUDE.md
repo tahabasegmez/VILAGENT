@@ -71,13 +71,21 @@ Key modules:
   window validation → preconditions → native action → postcondition verify. **Approval
   / policy gating was intentionally moved OUT of the engine to the action-lifecycle
   service** (`submit_action`/`execute_action`). The engine is the low-level executor.
-- `fara.py` — `FaraVisionActionProvider`: queries a FARA/Qwen2-VL-style vision model
-  and maps its `<tool_call>` JSON into typed `ActionCommand`s.
+- `fara.py` — `FaraVisionActionProvider`: the SOLE vision model. Queries a FARA-7B
+  endpoint and maps its `<tool_call>` JSON into typed `ActionCommand`s. The system
+  prompt is environment-aware (separate browser vs native desktop guidance). UI-TARS
+  has been removed entirely.
+- `browser_playwright.py` — `PlaywrightBrowserSession`: a dedicated Chromium that FARA
+  drives for `environment=="browser"` steps. Screenshot → FARA → execute on the DOM
+  surface (page.mouse / page.keyboard / goto). `device_scale_factor=1` keeps the
+  viewport screenshot 1:1 with page coordinates. Created lazily per run, closed by the
+  orchestrator. Headed by default (`browser.playwright_headless`).
 - `remote_host.py` — `RemoteWindowsHostControl`: the typed facade every Gateway route
   and the orchestrator use to reach the host (sessions, observe, resolve, submit,
   execute, approvals, events, audit).
 - `windows/` — read-only Pillow screen capture, pywinauto UIA discovery, semantic UIA
-  action provider (`action.py`), physical input (`input.py`, coordinate click only),
+  action provider (`action.py`, typing/hotkeys via pywinauto), physical input
+  (`input.py`, pyautogui click/double/right/scroll, enabled by default),
   desktop-safety, hotkey listener, dedicated child process.
 - `tools/` — the cu agent's own tools (`observe`, `find_element`, `verify_condition`,
   `perform_native_action`, `perform_browser_action`).
@@ -85,7 +93,7 @@ Key modules:
 ### Hotkey handling
 
 `windows/action.py::_pywinauto_hotkey` normalizes the many shapes a model emits
-(FARA `keys` arrays, UI-TARS `"ctrl c"` space combos, `"ctrl+c"`, win/super combos,
+(FARA `keys` arrays, `"ctrl c"` space combos, `"ctrl+c"`, win/super combos,
 literal `+`) into pywinauto key strings. Unknown alphanumeric names fall back to
 `{VK_NAME}` instead of raising, so a single odd key no longer aborts the whole step.
 Covered by `tests/test_computer_use_hotkey_parsing.py`.
@@ -100,13 +108,16 @@ step → replan on block. `execution_mode`:
   the vision loop, deterministic steps go through UIA/browser target resolution + the
   action lifecycle.
 
-The vision loop is bounded by `max_actions` per step (hard cap 4) and a `finish_step`
-terminate signal, so it cannot loop forever. `_detect_served_model_name` resolves the
-served model id from the configured base_url (ngrok tunnel friendly).
+Routing by environment: every `environment=="browser"` step goes to the Playwright
+session (`_execute_browser_step` → `_execute_browser_vision_loop` for visual steps, or
+a single deterministic `run_action` for visit_url/type/hotkey). `native` steps use the
+Windows host: vision steps → `_execute_fara_vision_loop` (pyautogui coordinate input),
+deterministic steps → UIA target resolution + action lifecycle.
 
-Known gap to address: `vision_provider="ui_tars"` currently reuses
-`FaraVisionActionProvider`, which only parses FARA `<tool_call>` JSON; UI-TARS emits a
-different `Action: ...(...)` action space and needs its own parser.
+The vision loops are bounded by `max_actions` per step (hard cap 6), a `finish_step`
+terminate signal, a no-progress loop guard, and bounded model-call-error retries, so
+they cannot loop forever. `_detect_served_model_name` resolves the served model id from
+the configured base_url (ngrok tunnel friendly).
 
 ## Gateway control plane (`app/gateway/routers/computer_use.py`)
 

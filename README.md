@@ -25,9 +25,11 @@ model and a full audit trail.
 2. **Approve** — the proposed plan and every risky action require operator approval
    (HITL). Approval/policy gating lives in the action-lifecycle service, not the
    low-level engine.
-3. **Execute** — each step runs through observe → lease → freshness/expected-window
-   checks → preconditions → native action → postcondition verification. Vision steps
-   run a bounded FARA/UI-TARS loop; deterministic steps resolve a stable UIA/DOM target.
+3. **Execute** — browser steps are driven by a dedicated Playwright Chromium (FARA acts
+   on the real DOM surface); native steps run through observe → lease → freshness checks
+   → preconditions → action (pyautogui pointer / pywinauto typing) → postcondition
+   verification. Vision steps run a bounded FARA loop; deterministic steps resolve a
+   stable UIA/DOM target.
 4. **Replan** — a short replan is requested only when a step is blocked.
 
 Two execution modes:
