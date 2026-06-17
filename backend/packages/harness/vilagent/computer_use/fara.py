@@ -195,6 +195,12 @@ class FaraVisionActionProvider:
                 ]
             })
 
+        # Strict vLLM chat templates reject consecutive same-role turns (which arise when
+        # a tool_response user message is followed by the new screenshot user message, or
+        # after a supervisor/retry nudge). Merge consecutive same-role messages so the
+        # conversation strictly alternates and the endpoint does not 400.
+        messages = _collapse_consecutive_roles(messages)
+
         payload = {
             "model": self._config.model_name,
             "messages": messages,
@@ -213,7 +219,10 @@ class FaraVisionActionProvider:
 
         async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
             response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # Surface the endpoint's real reason (vLLM/ngrok) instead of a bare status.
+                body = (response.text or "")[:400]
+                raise RuntimeError(f"FARA endpoint {response.status_code}: {body}")
             data = response.json()
 
         # Bind usage to the response we already received (no extra request).
@@ -361,6 +370,30 @@ class FaraVisionActionProvider:
             args=v_args,
             postconditions=postconditions,
         )
+
+
+def _content_to_parts(content: Any) -> list[dict[str, Any]]:
+    if isinstance(content, list):
+        return list(content)
+    return [{"type": "text", "text": str(content or "")}]
+
+
+def _collapse_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge adjacent same-role messages (except system) into one multi-part message.
+
+    Guarantees the conversation alternates user/assistant, which strict vLLM chat
+    templates require — otherwise consecutive user turns trigger a 400 Bad Request.
+    """
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+        if out and out[-1].get("role") == role and role != "system":
+            merged = _content_to_parts(out[-1]["content"]) + _content_to_parts(content)
+            out[-1]["content"] = merged
+        else:
+            out.append({"role": role, "content": content})
+    return out
 
 
 def _compact_history(history: list[dict[str, Any]], *, max_messages: int = 6) -> list[dict[str, Any]]:

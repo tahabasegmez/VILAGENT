@@ -4,7 +4,20 @@ from datetime import UTC, datetime
 
 import pytest
 
-from vilagent.computer_use.fara import FaraVisionActionProvider, _build_fara_system_prompt
+from vilagent.computer_use.fara import FaraVisionActionProvider, _build_fara_system_prompt, _collapse_consecutive_roles
+
+
+def test_collapse_consecutive_roles_merges_user_turns_for_strict_vllm():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "assistant", "content": "act1"},
+        {"role": "user", "content": "<tool_response>ok</tool_response>"},
+        {"role": "user", "content": [{"type": "text", "text": "next"}, {"type": "image_url", "image_url": {"url": "x"}}]},
+    ]
+    out = _collapse_consecutive_roles(messages)
+    assert [m["role"] for m in out] == ["system", "assistant", "user"]
+    # the two user turns merged into one multi-part message (tool_response + text + image)
+    assert isinstance(out[-1]["content"], list) and len(out[-1]["content"]) == 3
 from vilagent.computer_use.models import (
     ActionCommand,
     ActionKind,
