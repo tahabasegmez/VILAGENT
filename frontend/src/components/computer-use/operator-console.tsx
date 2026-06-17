@@ -2,7 +2,7 @@
 
 import {
   Activity, BrainCircuit, Bot, Check, CheckCircle2, ChevronDown, Circle, Cpu,
-  Image as ImageIcon, LayoutList, Loader2, Pointer, RefreshCcw,
+  Image as ImageIcon, LayoutList, Loader2, Maximize2, Pointer, RefreshCcw,
   Send, Settings, ShieldAlert, Square, Terminal, Trash2, XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -166,6 +166,27 @@ export function ComputerUseOperatorConsole() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [chatHistory.length, approvals.length, isRunning, liveThinking.thought, liveThinking.event]);
 
+  // "Action" = the agent is actually driving the screen (a plan step is running, or a
+  // vision/uia/browser executor is running) — NOT the planning / brief-writing phase.
+  const planSteps = agentActivity?.plan_steps ?? [];
+  const inAction = isRunning && (
+    planSteps.some(s => s.status === "running") ||
+    (agentActivity?.agents ?? []).some(a => a.agent_id !== "computer_use_plan_execute" && a.status === "running")
+  );
+
+  // Floating compact panel: while the agent acts, collapse the console to a small
+  // overlay (right-center) so it stays out of the way; a button restores the full UI.
+  const [floatingMode, setFloatingMode] = useState(false);
+  const [floatDismissed, setFloatDismissed] = useState(false);
+  useEffect(() => {
+    if (!isRunning) {
+      setFloatingMode(false);
+      setFloatDismissed(false);
+      return;
+    }
+    if (inAction && !floatDismissed) setFloatingMode(true);
+  }, [isRunning, inAction, floatDismissed]);
+
   const handleRunTask = () => {
     if (!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null || busy !== null) return;
     const userPrompt = draft.task_prompt;
@@ -255,6 +276,7 @@ export function ComputerUseOperatorConsole() {
       {/* Neon ambient glow */}
       <div className="pointer-events-none absolute inset-0 z-0 opacity-70 [background:radial-gradient(60%_45%_at_50%_-10%,rgba(168,85,247,0.22),transparent_70%),radial-gradient(45%_40%_at_100%_100%,rgba(217,70,239,0.12),transparent_70%)]" />
 
+      <div className={cn("flex flex-1 flex-col overflow-hidden", floatingMode && "hidden")}>
       {/* Header */}
       <header className="relative z-30 flex-none border-b border-white/5 bg-white/[0.02] px-5 py-3 backdrop-blur-xl">
         <div className="flex items-center justify-between">
@@ -537,6 +559,65 @@ export function ComputerUseOperatorConsole() {
           </Panel>
         </aside>
       </div>
+      </div>
+
+      {/* Floating compact panel (right-center) while the agent is driving the screen */}
+      {floatingMode && (
+        <div className="fixed right-4 top-1/2 z-[70] flex max-h-[82vh] w-[300px] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-fuchsia-500/25 bg-[#0c0712]/95 shadow-[0_0_50px_-10px_rgba(192,132,252,0.55)] backdrop-blur-xl animate-in fade-in slide-in-from-right-4">
+          <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="size-3.5 animate-spin text-fuchsia-300" />
+              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200">VILAGENT</span>
+            </div>
+            <button type="button" title="Restore full view" onClick={() => { setFloatingMode(false); setFloatDismissed(true); }} className="grid size-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-fuchsia-200">
+              <Maximize2 className="size-3.5" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-3 py-2.5">
+            {planSteps.length === 0 ? (
+              <p className="text-[11px] italic text-zinc-500">Preparing…</p>
+            ) : (
+              <div className="space-y-1.5">
+                {planSteps.map((step) => {
+                  const done = step.status === "completed";
+                  const running = step.status === "running";
+                  const error = step.status === "failed" || step.status === "blocked";
+                  return (
+                    <div key={step.step_id} className="flex items-start gap-2">
+                      <span className={cn(
+                        "mt-0.5 grid size-4 shrink-0 place-items-center rounded-full ring-1",
+                        done ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30"
+                          : running ? "bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-400/40 shadow-[0_0_10px_-2px_rgba(192,132,252,0.8)]"
+                          : error ? "bg-red-500/15 text-red-400 ring-red-500/30"
+                          : "bg-white/5 text-zinc-600 ring-white/10",
+                      )}>
+                        {done ? <Check className="size-2.5" /> : running ? <Loader2 className="size-2.5 animate-spin" /> : error ? <XCircle className="size-2.5" /> : <Circle className="size-1.5" />}
+                      </span>
+                      <p className={cn("text-[11px] leading-snug", done ? "text-zinc-500 line-through" : error ? "text-red-300" : running ? "text-zinc-100" : "text-zinc-400")}>{step.instruction}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {liveThinking.thought && (
+            <div className="border-t border-white/8 px-3 py-2">
+              <p key={liveThinking.thought} className="flex items-start gap-1.5 text-[10.5px] italic leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-bottom-1">
+                <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
+                <span className="shimmer line-clamp-3">{liveThinking.thought}</span>
+              </p>
+            </div>
+          )}
+
+          <div className="border-t border-white/8 p-2">
+            <button type="button" onClick={handleEmergencyStop} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-red-500 to-rose-600 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_16px_-6px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-[0.98]">
+              <Square className="size-3 fill-current" /> Stop
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Logs drawer */}
       {showLogs && (
