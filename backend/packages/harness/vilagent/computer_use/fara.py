@@ -205,7 +205,10 @@ class FaraVisionActionProvider:
             "model": self._config.model_name,
             "messages": messages,
             "temperature": 0.0,
-            "max_tokens": 512,
+            # One short sentence + one tool_call JSON is well under this; keeping it small
+            # leaves more of the model's context window for the image + history so the
+            # endpoint does not reject the request for lack of room.
+            "max_tokens": 256,
         }
 
         headers = {
@@ -396,7 +399,7 @@ def _collapse_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str
     return out
 
 
-def _compact_history(history: list[dict[str, Any]], *, max_messages: int = 6) -> list[dict[str, Any]]:
+def _compact_history(history: list[dict[str, Any]], *, max_messages: int = 4) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for message in history[-max_messages:]:
         content = message.get("content")
