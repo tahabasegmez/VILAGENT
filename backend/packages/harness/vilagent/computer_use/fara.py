@@ -45,6 +45,7 @@ _NATIVE_GUIDANCE = """Native Windows desktop:
 
 
 _BROWSER_GUIDANCE = """Web browser:
+* If the page looks blank, white, or is still loading (spinner, partial content), emit a wait action and look again on the next screenshot — do NOT conclude the page is empty or return finish_step failure; pages often need a moment to render.
 * Navigate with browser_action visit_url for a known URL, and web_search for a query — prefer these over manually clicking the address bar.
 * When a separate scrollable container overlays the page, mouse_move() over it first, then scroll() to scroll within it.
 * If a popup/cookie/consent dialog appears and clicking its X or "Accept"/"Reject" button does not close it, try key(['Escape']).

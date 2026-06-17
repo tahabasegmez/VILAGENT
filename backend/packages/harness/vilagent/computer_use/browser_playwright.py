@@ -429,6 +429,7 @@ class PlaywrightBrowserSession:
             if "://" not in url:
                 url = "https://" + url
             await self._page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
+            await self._settle()
             return True, None
         if op == "web_search":
             query = str(action.args.get("query") or action.args.get("text") or "").strip()
@@ -439,24 +440,36 @@ class PlaywrightBrowserSession:
                 wait_until="domcontentloaded",
                 timeout=self._nav_timeout_ms,
             )
+            await self._settle()
             return True, None
         if op in ("history_back", "go_back"):
             await self._page.go_back(timeout=self._nav_timeout_ms)
+            await self._settle()
             return True, None
         if op == "go_forward":
             await self._page.go_forward(timeout=self._nav_timeout_ms)
+            await self._settle()
             return True, None
         if op == "refresh":
             await self._page.reload(timeout=self._nav_timeout_ms)
+            await self._settle()
             return True, None
         return False, f"browser_unsupported_operation:{op or 'none'}"
 
     async def _settle(self) -> None:
+        # Wait for the page to actually finish loading and render before we screenshot,
+        # so the vision model never sees a blank / half-loaded page and give up.
+        for state in ("domcontentloaded", "load"):
+            try:
+                await self._page.wait_for_load_state(state, timeout=8000)
+            except Exception:
+                pass
+        # Brief network-idle wait catches client-rendered (SPA) content; best-effort.
         try:
-            await self._page.wait_for_load_state("domcontentloaded", timeout=3000)
+            await self._page.wait_for_load_state("networkidle", timeout=2500)
         except Exception:
             pass
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.7)
 
     async def close(self) -> None:
         for closer in (
