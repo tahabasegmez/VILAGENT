@@ -86,6 +86,41 @@ def _default_edge_user_data_dir() -> str | None:
     return os.path.join(home, ".config", "microsoft-edge")
 
 
+def _resolve_user_data_and_profile(user_data_dir: str | None, profile_directory: str) -> tuple[str | None, str]:
+    """Accept either the 'User Data' parent or a specific profile folder.
+
+    Chromium expects ``user_data_dir`` = the 'User Data' parent and ``--profile-directory``
+    = the profile sub-folder name (e.g. 'Default', 'Profile 1'). If the operator points at
+    the profile folder directly (it contains a 'Preferences' file), split it so the right
+    profile actually opens instead of a fresh one.
+    """
+    if not user_data_dir:
+        return user_data_dir, profile_directory
+    cleaned = user_data_dir.rstrip("/\\")
+    try:
+        looks_like_profile = os.path.isfile(os.path.join(cleaned, "Preferences"))
+    except Exception:
+        looks_like_profile = False
+    if looks_like_profile:
+        parent = os.path.dirname(cleaned)
+        name = os.path.basename(cleaned)
+        if parent and name:
+            return parent, name
+    return user_data_dir, profile_directory
+
+
+def _infer_channel(channel: str, user_data_dir: str | None) -> str:
+    """Infer the browser channel from the profile path so a Chrome profile opens in Chrome."""
+    path = (user_data_dir or "").lower().replace("\\", "/")
+    if "/google/chrome" in path:
+        return "chrome"
+    if "/bravesoftware/" in path:
+        return "chrome"  # Brave is Chromium; closest channel
+    if "/microsoft/edge" in path:
+        return "msedge"
+    return channel
+
+
 class PlaywrightBrowserSession:
     """A single dedicated browser page that FARA drives through Playwright.
 
@@ -144,26 +179,40 @@ class PlaywrightBrowserSession:
             "device_scale_factor": 1,
             "accept_downloads": bool(self._downloads_folder),
         }
+        # Keep the real Chromium sandbox ON (chromium_sandbox=True) so Playwright does NOT
+        # add --no-sandbox, which otherwise shows the "unsupported command-line flag" bar.
+        # Drop --enable-automation so the "controlled by automated software" banner is gone.
+        common["chromium_sandbox"] = True
+        common["ignore_default_args"] = ["--enable-automation"]
+        extra_args = ["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"]
 
         user_data_dir = self._user_data_dir or (_default_edge_user_data_dir() if self._use_user_profile else None)
+        # Be forgiving about what the operator points at: if they gave the specific profile
+        # FOLDER (e.g. "...\\User Data\\Profile 1") instead of the "User Data" parent, split
+        # it so --profile-directory selects the right profile. Also infer the browser channel
+        # from the path (Chrome vs Edge) so a Chrome profile opens in Chrome.
+        user_data_dir, profile_directory = _resolve_user_data_and_profile(user_data_dir, self._profile_directory)
+        channel = _infer_channel(self._channel, user_data_dir)
+
         if self._use_user_profile and user_data_dir:
-            # Launch the real Edge profile so the operator's accounts are already in.
+            # Launch the real profile so the operator's accounts are already in.
             try:
                 self._context = await self._playwright.chromium.launch_persistent_context(
                     user_data_dir,
-                    channel=self._channel,
+                    channel=channel,
                     headless=self._headless,
-                    args=[f"--profile-directory={self._profile_directory}"],
+                    args=[*extra_args, f"--profile-directory={profile_directory}"],
                     **common,
                 )
                 self._persistent = True
             except Exception as exc:  # pragma: no cover - environment dependent
                 await self._safe_stop_playwright()
                 raise PlaywrightUnavailableError(
-                    f"Could not launch Microsoft Edge with your profile from '{user_data_dir}'. "
-                    "Make sure Edge is fully CLOSED (its profile is locked while it runs), and that "
-                    "Edge is installed. To use a different profile set VILAGENT_BROWSER_USER_DATA_DIR / "
-                    f"VILAGENT_BROWSER_PROFILE. Underlying error: {exc}"
+                    f"Could not launch {channel or 'the browser'} with your profile from "
+                    f"'{user_data_dir}' (profile '{profile_directory}'). Make sure that browser is fully "
+                    "CLOSED (its profile is locked while it runs) and installed. Set "
+                    "VILAGENT_BROWSER_USER_DATA_DIR to the 'User Data' folder and VILAGENT_BROWSER_PROFILE "
+                    f"to the profile name. Underlying error: {exc}"
                 ) from exc
             self._context.set_default_timeout(self._nav_timeout_ms)
             pages = [p for p in self._context.pages if not p.is_closed()]
@@ -171,18 +220,18 @@ class PlaywrightBrowserSession:
         else:
             # Fresh-profile fallback (e.g. headless servers): a normal browser context.
             try:
-                self._browser = await self._playwright.chromium.launch(channel=self._channel, headless=self._headless)
+                self._browser = await self._playwright.chromium.launch(channel=channel, headless=self._headless, chromium_sandbox=True, ignore_default_args=["--enable-automation"], args=extra_args)
             except Exception:
                 # Edge channel unavailable -> fall back to bundled Chromium.
                 try:
-                    self._browser = await self._playwright.chromium.launch(headless=self._headless)
+                    self._browser = await self._playwright.chromium.launch(headless=self._headless, chromium_sandbox=True, ignore_default_args=["--enable-automation"], args=extra_args)
                 except Exception as exc:  # pragma: no cover - environment dependent
                     await self._safe_stop_playwright()
                     raise PlaywrightUnavailableError(
                         "Could not launch a browser; install Edge ('python -m playwright install msedge') "
                         f"or Chromium ('python -m playwright install chromium'). Underlying error: {exc}"
                     ) from exc
-            self._context = await self._browser.new_context(**common)
+            self._context = await self._browser.new_context(**{k: v for k, v in common.items() if k not in {"chromium_sandbox", "ignore_default_args"}})
             self._context.set_default_timeout(self._nav_timeout_ms)
             self._page = await self._context.new_page()
         self._started = True
