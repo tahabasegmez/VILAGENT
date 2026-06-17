@@ -316,6 +316,22 @@ export async function listPendingApprovals(
   );
 }
 
+export type EmergencyStopStatus = { engaged: boolean; reason?: string | null };
+
+export async function engageEmergencyStop(reason = "Operator pressed stop"): Promise<EmergencyStopStatus> {
+  return requestJson<EmergencyStopStatus>("/emergency-stop/engage", {
+    method: "POST",
+    body: { reason },
+  });
+}
+
+export async function resetEmergencyStop(reason = "Operator cleared stop"): Promise<EmergencyStopStatus> {
+  return requestJson<EmergencyStopStatus>("/emergency-stop/reset", {
+    method: "POST",
+    body: { reason },
+  });
+}
+
 export async function getApproval(
   approvalId: string,
   owner: ActionOwner,
