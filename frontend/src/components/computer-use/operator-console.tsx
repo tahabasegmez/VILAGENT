@@ -140,23 +140,39 @@ export function ComputerUseOperatorConsole() {
   const plannerSummary = useMemo(() => summarizeModel(llmAgents), [llmAgents]);
   const visionSummary = useMemo(() => summarizeModel(visionAgents), [visionAgents]);
 
-  const isRunning = busy === "run-computer-use-task";
-  const liveAgent = agentActivity?.agents?.find(a => a.status === "running");
-  const liveThought = isRunning ? (liveAgent?.current_thought ?? null) : null;
-  const liveEvent = isRunning ? (liveAgent?.last_event ?? null) : null;
+  // Explicit run flag (does not rely on the shared `busy` label) + the live thinking we
+  // harvest from the polled activity, so the chat can stream it as a message.
+  const [runActive, setRunActive] = useState(false);
+  const [liveThinking, setLiveThinking] = useState<{ event: string | null; thought: string | null }>({ event: null, thought: null });
+  const isRunning = runActive || busy === "run-computer-use-task";
+
+  useEffect(() => {
+    if (!isRunning) {
+      setLiveThinking({ event: null, thought: null });
+      return;
+    }
+    const running = agentActivity?.agents?.find(a => a.status === "running");
+    const thought = running?.current_thought?.trim() || null;
+    const event = running?.last_event?.trim() || null;
+    if (thought || event) {
+      setLiveThinking(prev => (prev.thought === thought && prev.event === event ? prev : { event, thought }));
+    }
+  }, [agentActivity, isRunning]);
 
   // Keep the latest message / live thinking in view (it lands at the bottom of the list).
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [chatHistory.length, approvals.length, isRunning, liveThought, liveEvent]);
+  }, [chatHistory.length, approvals.length, isRunning, liveThinking.thought, liveThinking.event]);
 
   const handleRunTask = () => {
     if (!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null || busy !== null) return;
     const userPrompt = draft.task_prompt;
     setChatHistory(prev => [...prev, { id: crypto.randomUUID(), role: "user", text: userPrompt, createdAt: new Date() }]);
     patchDraft({ task_prompt: "" });
+    setRunActive(true);
+    setLiveThinking({ event: "Starting…", thought: null });
 
     void run("run-computer-use-task", async () => {
       try {
@@ -187,6 +203,8 @@ export function ComputerUseOperatorConsole() {
           createdAt: new Date(),
         }]);
         throw error;
+      } finally {
+        setRunActive(false);
       }
     });
   };
@@ -343,21 +361,23 @@ export function ComputerUseOperatorConsole() {
                   <div className="flex w-full justify-start">
                     <div className="mr-2.5 mt-0.5 flex-shrink-0">
                       <div className="grid size-7 place-items-center rounded-lg bg-fuchsia-500/10 text-fuchsia-300 ring-1 ring-fuchsia-500/25">
-                        <Loader2 className="size-3.5 animate-spin" />
+                        <Bot className="size-3.5" />
                       </div>
                     </div>
-                    <div className="max-w-[85%] space-y-1.5 rounded-2xl rounded-bl-md border border-fuchsia-400/20 bg-white/[0.03] px-4 py-3 sm:max-w-[78%]">
-                      <div className="flex items-center gap-2 text-[13px] text-zinc-200">
-                        <span className="size-1.5 animate-pulse rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(192,132,252,0.9)]" />
-                        <span className="shimmer">{liveAgent?.last_event ?? "Working…"}</span>
+                    <div className="max-w-[85%] space-y-2 rounded-2xl rounded-bl-md border border-fuchsia-400/20 bg-white/[0.03] px-4 py-3 sm:max-w-[78%]">
+                      {/* Status line */}
+                      <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-300">
+                        <Loader2 className="size-3.5 animate-spin text-fuchsia-300" />
+                        <span className="shimmer">{liveThinking.event ?? "Thinking…"}</span>
                       </div>
-                      {liveAgent?.current_thought && (
+                      {/* Live thinking — small, animated, re-animates on each change */}
+                      {liveThinking.thought && (
                         <p
-                          key={liveAgent.current_thought}
-                          className="flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-bottom-1"
+                          key={liveThinking.thought}
+                          className="flex items-start gap-1.5 border-l-2 border-fuchsia-400/30 pl-2.5 text-[11.5px] italic leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-left-1"
                         >
                           <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
-                          <span className="shimmer line-clamp-3">{liveAgent.current_thought}</span>
+                          <span className="shimmer">{liveThinking.thought}</span>
                         </p>
                       )}
                     </div>
