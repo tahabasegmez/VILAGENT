@@ -42,6 +42,14 @@ class ComputerUseBrowserConfig(BaseModel):
     playwright_headless: bool = Field(default_factory=lambda: _env_bool("VILAGENT_BROWSER_HEADLESS", False))
     viewport_width: int = Field(default=1280, ge=320, le=7680)
     viewport_height: int = Field(default=800, ge=240, le=4320)
+    # Use the installed Microsoft Edge (not Playwright's bundled Chromium) with the
+    # operator's REAL profile, so their accounts/cookies/logins are already present —
+    # not a fresh guest profile. Requires Edge to be CLOSED at launch (profile lock).
+    channel: str = Field(default_factory=lambda: os.getenv("VILAGENT_BROWSER_CHANNEL", "msedge"))
+    use_user_profile: bool = Field(default_factory=lambda: _env_bool("VILAGENT_BROWSER_USE_PROFILE", True))
+    # None -> resolve the OS-default Edge "User Data" directory at launch time.
+    user_data_dir: str | None = Field(default_factory=lambda: os.getenv("VILAGENT_BROWSER_USER_DATA_DIR"))
+    profile_directory: str = Field(default_factory=lambda: os.getenv("VILAGENT_BROWSER_PROFILE", "Default"))
 
 
 class ComputerUseTextModelConfig(BaseModel):

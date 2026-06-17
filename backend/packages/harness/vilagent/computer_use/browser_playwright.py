@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -71,8 +72,26 @@ class PlaywrightUnavailableError(RuntimeError):
     """Raised when the playwright package or its browser binary is missing."""
 
 
+def _default_edge_user_data_dir() -> str | None:
+    """The OS-default Microsoft Edge 'User Data' directory (holds the real profiles)."""
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return os.path.join(local, "Microsoft", "Edge", "User Data")
+        return None
+    home = os.path.expanduser("~")
+    mac = os.path.join(home, "Library", "Application Support", "Microsoft Edge")
+    if os.path.isdir(mac):
+        return mac
+    return os.path.join(home, ".config", "microsoft-edge")
+
+
 class PlaywrightBrowserSession:
-    """A single dedicated Chromium page that FARA drives through Playwright."""
+    """A single dedicated browser page that FARA drives through Playwright.
+
+    By default this is the installed Microsoft Edge launched with the operator's real
+    user profile (their accounts/cookies/logins), not a fresh guest profile.
+    """
 
     def __init__(
         self,
@@ -82,16 +101,25 @@ class PlaywrightBrowserSession:
         viewport_height: int = 800,
         downloads_folder: str | None = None,
         nav_timeout_ms: int = 30000,
+        channel: str = "msedge",
+        use_user_profile: bool = True,
+        user_data_dir: str | None = None,
+        profile_directory: str = "Default",
     ):
         self._headless = headless
         self._viewport_width = viewport_width
         self._viewport_height = viewport_height
         self._downloads_folder = downloads_folder
         self._nav_timeout_ms = nav_timeout_ms
+        self._channel = channel or "msedge"
+        self._use_user_profile = use_user_profile
+        self._user_data_dir = user_data_dir
+        self._profile_directory = profile_directory or "Default"
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        self._persistent = False
         self._started = False
 
     @property
@@ -106,34 +134,75 @@ class PlaywrightBrowserSession:
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise PlaywrightUnavailableError(
                 "playwright is not installed; run 'python -m pip install playwright' "
-                "and 'python -m playwright install chromium'."
+                "and 'python -m playwright install msedge'."
             ) from exc
         self._playwright = await async_playwright().start()
-        try:
-            self._browser = await self._playwright.chromium.launch(headless=self._headless)
-        except Exception as exc:  # pragma: no cover - environment dependent
-            await self._safe_stop_playwright()
-            raise PlaywrightUnavailableError(
-                "Could not launch Chromium; run 'python -m playwright install chromium'. "
-                f"Underlying error: {exc}"
-            ) from exc
         # device_scale_factor=1 keeps screenshot pixels == page mouse coordinates so
         # FARA's coordinates land exactly where it intends.
-        self._context = await self._browser.new_context(
-            viewport={"width": self._viewport_width, "height": self._viewport_height},
-            device_scale_factor=1,
-            accept_downloads=bool(self._downloads_folder),
-        )
-        self._context.set_default_timeout(self._nav_timeout_ms)
-        self._page = await self._context.new_page()
+        common = {
+            "viewport": {"width": self._viewport_width, "height": self._viewport_height},
+            "device_scale_factor": 1,
+            "accept_downloads": bool(self._downloads_folder),
+        }
+
+        user_data_dir = self._user_data_dir or (_default_edge_user_data_dir() if self._use_user_profile else None)
+        if self._use_user_profile and user_data_dir:
+            # Launch the real Edge profile so the operator's accounts are already in.
+            try:
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    user_data_dir,
+                    channel=self._channel,
+                    headless=self._headless,
+                    args=[f"--profile-directory={self._profile_directory}"],
+                    **common,
+                )
+                self._persistent = True
+            except Exception as exc:  # pragma: no cover - environment dependent
+                await self._safe_stop_playwright()
+                raise PlaywrightUnavailableError(
+                    f"Could not launch Microsoft Edge with your profile from '{user_data_dir}'. "
+                    "Make sure Edge is fully CLOSED (its profile is locked while it runs), and that "
+                    "Edge is installed. To use a different profile set VILAGENT_BROWSER_USER_DATA_DIR / "
+                    f"VILAGENT_BROWSER_PROFILE. Underlying error: {exc}"
+                ) from exc
+            self._context.set_default_timeout(self._nav_timeout_ms)
+            pages = [p for p in self._context.pages if not p.is_closed()]
+            self._page = pages[0] if pages else await self._context.new_page()
+        else:
+            # Fresh-profile fallback (e.g. headless servers): a normal browser context.
+            try:
+                self._browser = await self._playwright.chromium.launch(channel=self._channel, headless=self._headless)
+            except Exception:
+                # Edge channel unavailable -> fall back to bundled Chromium.
+                try:
+                    self._browser = await self._playwright.chromium.launch(headless=self._headless)
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    await self._safe_stop_playwright()
+                    raise PlaywrightUnavailableError(
+                        "Could not launch a browser; install Edge ('python -m playwright install msedge') "
+                        f"or Chromium ('python -m playwright install chromium'). Underlying error: {exc}"
+                    ) from exc
+            self._context = await self._browser.new_context(**common)
+            self._context.set_default_timeout(self._nav_timeout_ms)
+            self._page = await self._context.new_page()
         self._started = True
 
     def is_alive(self) -> bool:
-        """True when the browser is still started and connected (window not closed)."""
-        if not self._started or self._browser is None or self._page is None:
+        """True when the browser is still started with at least one open tab."""
+        if not self._started or self._context is None:
             return False
         try:
-            return bool(self._browser.is_connected()) and not self._page.is_closed()
+            # Persistent (real-profile) contexts have no .browser handle, so judge
+            # liveness by whether any tab is still open. If the active tab was closed
+            # but others remain, adopt one of them.
+            open_pages = [p for p in self._context.pages if not p.is_closed()]
+            if not open_pages:
+                return False
+            if self._page is None or self._page.is_closed():
+                self._page = open_pages[-1]
+            if self._browser is not None and not self._browser.is_connected():
+                return False
+            return True
         except Exception:
             return False
 
@@ -334,6 +403,10 @@ async def get_shared_browser_session(
     headless: bool = False,
     viewport_width: int = 1280,
     viewport_height: int = 800,
+    channel: str = "msedge",
+    use_user_profile: bool = True,
+    user_data_dir: str | None = None,
+    profile_directory: str = "Default",
 ) -> PlaywrightBrowserSession:
     global _shared_session
     async with _shared_lock:
@@ -349,6 +422,10 @@ async def get_shared_browser_session(
                 headless=headless,
                 viewport_width=viewport_width,
                 viewport_height=viewport_height,
+                channel=channel,
+                use_user_profile=use_user_profile,
+                user_data_dir=user_data_dir,
+                profile_directory=profile_directory,
             )
             await session.start()
             _shared_session = session

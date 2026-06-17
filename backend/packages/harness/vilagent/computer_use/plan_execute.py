@@ -342,10 +342,15 @@ class ComputerUseStepExecutor:
     async def _ensure_browser_session(self, config) -> PlaywrightBrowserSession:
         # Reuse a persistent, shared browser so it stays open after the task finishes
         # (the operator can inspect the result) and is reused by the next run.
+        browser = config.computer_use.browser
         self._browser_session = await get_shared_browser_session(
-            headless=config.computer_use.browser.playwright_headless,
-            viewport_width=config.computer_use.browser.viewport_width,
-            viewport_height=config.computer_use.browser.viewport_height,
+            headless=browser.playwright_headless,
+            viewport_width=browser.viewport_width,
+            viewport_height=browser.viewport_height,
+            channel=browser.channel,
+            use_user_profile=browser.use_user_profile,
+            user_data_dir=browser.user_data_dir,
+            profile_directory=browser.profile_directory,
         )
         return self._browser_session
 
