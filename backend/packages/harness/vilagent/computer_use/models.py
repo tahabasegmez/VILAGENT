@@ -233,7 +233,16 @@ class ActionCommand(BaseModel):
 
     @model_validator(mode="after")
     def validate_target_requirement(self) -> ActionCommand:
-        target_optional = {ActionKind.type_text, ActionKind.hotkey, ActionKind.launch_app, ActionKind.browser_action, ActionKind.integration_action}
+        # scroll may be targetless (scroll the focused page/window); the executor then
+        # scrolls at the current cursor / viewport.
+        target_optional = {
+            ActionKind.type_text,
+            ActionKind.hotkey,
+            ActionKind.launch_app,
+            ActionKind.browser_action,
+            ActionKind.integration_action,
+            ActionKind.scroll,
+        }
         if self.kind not in target_optional and self.target is None:
             raise ValueError(f"Action kind '{self.kind}' requires a target")
         return self

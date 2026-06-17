@@ -57,6 +57,43 @@ def test_enabled_physical_double_right_scroll_dispatch_to_their_injectors():
     assert ("scroll", 13, 24, -200) in calls
 
 
+def test_targetless_scroll_uses_screen_center_and_dispatches():
+    calls = []
+    provider = WindowsPhysicalInputProvider(
+        enabled=True,
+        scroll_injector=lambda x, y, amount: calls.append((x, y, amount)),
+    )
+    action = ActionCommand(action_id="a", session_id="s", kind=ActionKind.scroll, args={"amount": -300})
+    result = asyncio.run(provider.execute(action))
+    assert result.succeeded is True
+    assert len(calls) == 1 and calls[0][2] == -300  # scrolled at the (screen-center) coords
+
+
+def test_routed_provider_sends_targetless_scroll_to_physical_provider():
+    class Provider:
+        def __init__(self, name, supported_actions=None):
+            self.name = name
+            self.calls = []
+            if supported_actions is not None:
+                self.supported_actions = supported_actions
+
+        async def execute(self, action):
+            self.calls.append(action)
+            from vilagent.computer_use.models import NativeActionResult
+
+            return NativeActionResult(succeeded=True, details={"provider": self.name})
+
+    semantic = Provider("semantic")
+    physical = Provider("physical", {ActionKind.scroll})
+    routed = WindowsRoutedActionProvider(semantic, physical)
+    action = ActionCommand(action_id="a", session_id="s", kind=ActionKind.scroll, args={"amount": -200})
+
+    result = asyncio.run(routed.execute(action))
+
+    assert result.details["provider"] == "physical"
+    assert semantic.calls == []
+
+
 def test_routed_provider_sends_coordinate_double_click_to_physical_provider():
     class Provider:
         def __init__(self, name, supported_actions=None):

@@ -76,8 +76,20 @@ def pyautogui_move(x: int, y: int) -> None:
 def pyautogui_scroll(x: int, y: int, amount: int) -> None:
     pg = _pyautogui()
     pg.moveTo(x, y)
-    # FARA: positive amount scrolls up; pyautogui.scroll positive scrolls up too.
-    pg.scroll(int(amount), x=x, y=y)
+    # FARA emits the amount in "pixels" (positive = up); pyautogui.scroll uses wheel
+    # "clicks" (~120px each, positive = up). Convert so we don't over/under-scroll.
+    if not amount:
+        amount = -360  # default: a few notches down
+    clicks = int(round(amount / 120)) or (1 if amount > 0 else -1)
+    pg.scroll(clicks, x=x, y=y)
+
+
+def _screen_center() -> tuple[int, int]:
+    try:
+        width, height = _pyautogui().size()
+        return int(width) // 2, int(height) // 2
+    except Exception:
+        return 960, 540
 
 
 class WindowsRoutedActionProvider:
@@ -97,11 +109,11 @@ class WindowsRoutedActionProvider:
             if self._browser is None:
                 return NativeActionResult(succeeded=False, error_code="browser_action_disabled", error_message="Browser actions are disabled.")
             return await self._browser.execute(action)
-        if (
-            action.target is not None
-            and action.target.strategy == TargetStrategy.coordinate
-            and action.kind in getattr(self._physical, "supported_actions", {ActionKind.click})
-        ):
+        supported = getattr(self._physical, "supported_actions", {ActionKind.click})
+        is_coord = action.target is not None and action.target.strategy == TargetStrategy.coordinate
+        # Coordinate pointer actions go to physical input; scroll also goes there even
+        # without a coordinate (scroll the focused window at the current cursor).
+        if action.kind in supported and (is_coord or action.kind == ActionKind.scroll):
             return await self._physical.execute(action)
         return await self._semantic.execute(action)
 
@@ -138,10 +150,15 @@ class WindowsPhysicalInputProvider:
             return NativeActionResult(succeeded=False, error_code="physical_input_disabled", error_message="Physical input is disabled.")
         if action.kind not in self.supported_actions:
             return NativeActionResult(succeeded=False, error_code="physical_input_unsupported", error_message="Physical input action is unsupported.")
-        if action.target is None or action.target.strategy != TargetStrategy.coordinate or action.target.bounds is None:
+        has_target = action.target is not None and action.target.strategy == TargetStrategy.coordinate and action.target.bounds is not None
+        if has_target:
+            x = action.target.bounds.x + action.target.bounds.width // 2
+            y = action.target.bounds.y + action.target.bounds.height // 2
+        elif action.kind == ActionKind.scroll:
+            # Targetless scroll: scroll at the screen centre (the focused window).
+            x, y = _screen_center()
+        else:
             return NativeActionResult(succeeded=False, error_code="coordinate_target_required", error_message="Physical pointer input requires a bounded coordinate target.")
-        x = action.target.bounds.x + action.target.bounds.width // 2
-        y = action.target.bounds.y + action.target.bounds.height // 2
         injector, call = self._injector_for(action, x, y)
         if injector is None:
             return NativeActionResult(succeeded=False, error_code="physical_input_backend_unavailable", error_message="Physical input backend is unavailable.")
