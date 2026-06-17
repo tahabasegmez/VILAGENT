@@ -61,6 +61,13 @@ export type ExecutionModeSelection = {
   options: ComputerUseExecutionMode[];
 };
 
+export type AgentApproach = "plan_execute" | "autonomous";
+
+export type AgentApproachSelection = {
+  approach: AgentApproach;
+  options: AgentApproach[];
+};
+
 export type VisionRecoverySelection = {
   enabled: boolean;
 };

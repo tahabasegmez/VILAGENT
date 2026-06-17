@@ -42,6 +42,7 @@ from vilagent.computer_use.models import (
     WindowRef,
 )
 from vilagent.computer_use.plan_execute import JsonLLMPlanner, PlanExecuteComputerUseOrchestrator
+from vilagent.computer_use.autonomous_fara import AutonomousFaraOrchestrator
 from vilagent.computer_use.remote_host import (
     RemoteHostOperationError,
     RemoteHostUnavailableError,
@@ -385,6 +386,9 @@ async def _run_plan_execute_task(
         # re-reading config defaults (config is only the bootstrap value before the
         # UI has selected anything).
         strategy = _get_vilagent_state_value("execution_mode", "hybrid")
+        # Agent approach: "plan_execute" (planner decomposes into steps fed to FARA one
+        # at a time) vs "autonomous" (planner writes one brief, FARA runs the whole task).
+        agent_approach = _get_vilagent_state_value("agent_approach", "plan_execute")
         vision_provider = _get_vilagent_state_value("vision_provider", config.computer_use.vision_provider)
         # Recovery supervisor (opt-in via UI toggle): when stuck, consult a stronger
         # vision+reasoning model. Source is operator-selected: the current planner
@@ -398,17 +402,25 @@ async def _run_plan_execute_task(
         approval_threshold = RiskLevel.critical if config.computer_use.unrestricted else body.auto_approve_risk_threshold
 
         try:
-            orchestrator = PlanExecuteComputerUseOrchestrator(
-                planner=JsonLLMPlanner(model_name),
-                remote=remote,
-                auto_approve_risk_threshold=approval_threshold,
-                execution_mode=strategy,
-                vision_provider=vision_provider,
-                vision_recovery=vision_recovery,
-                supervisor_model_factory=supervisor_factory,
-                max_replans=2,
-                max_steps=min(config.computer_use.budgets.total_actions, 20),
-            )
+            if agent_approach == "autonomous":
+                orchestrator = AutonomousFaraOrchestrator(
+                    instruction_model_name=model_name,
+                    remote=remote,
+                    auto_approve_risk_threshold=approval_threshold,
+                    max_actions=min(config.computer_use.budgets.total_actions, 40),
+                )
+            else:
+                orchestrator = PlanExecuteComputerUseOrchestrator(
+                    planner=JsonLLMPlanner(model_name),
+                    remote=remote,
+                    auto_approve_risk_threshold=approval_threshold,
+                    execution_mode=strategy,
+                    vision_provider=vision_provider,
+                    vision_recovery=vision_recovery,
+                    supervisor_model_factory=supervisor_factory,
+                    max_replans=2,
+                    max_steps=min(config.computer_use.budgets.total_actions, 20),
+                )
         except Exception as e:
             return ComputerUseTaskRunResponse(
                 thread_id=body.thread_id,
@@ -557,6 +569,35 @@ async def get_execution_mode_selection() -> ExecutionModeSelectionResponse:
 async def update_execution_mode_selection(body: ExecutionModeSelectionUpdateRequest) -> ExecutionModeSelectionResponse:
     _set_vilagent_state_value("execution_mode", body.execution_mode)
     return ExecutionModeSelectionResponse(execution_mode=body.execution_mode)
+
+
+class AgentApproachSelectionResponse(BaseModel):
+    approach: str
+    options: list[str] = Field(default_factory=lambda: ["plan_execute", "autonomous"])
+
+
+class AgentApproachSelectionUpdateRequest(BaseModel):
+    approach: str = Field(pattern="^(plan_execute|autonomous)$")
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get(
+    "/approach",
+    response_model=AgentApproachSelectionResponse,
+    summary="Get the active agent approach (plan_execute vs autonomous FARA)",
+)
+async def get_agent_approach_selection() -> AgentApproachSelectionResponse:
+    return AgentApproachSelectionResponse(approach=_get_vilagent_state_value("agent_approach", "plan_execute"))
+
+
+@router.post(
+    "/approach",
+    response_model=AgentApproachSelectionResponse,
+    summary="Switch the agent approach and persist it to the state file",
+)
+async def update_agent_approach_selection(body: AgentApproachSelectionUpdateRequest) -> AgentApproachSelectionResponse:
+    _set_vilagent_state_value("agent_approach", body.approach)
+    return AgentApproachSelectionResponse(approach=body.approach)
 
 
 class VisionRecoverySelectionResponse(BaseModel):

@@ -17,11 +17,12 @@ import {
   listPendingApprovals,
   updateTextModelSelection,
   updateExecutionModeSelection, getExecutionModeSelection,
+  getAgentApproachSelection, updateAgentApproachSelection,
   getVisionRecoverySelection, updateVisionRecoverySelection,
   getSupervisorSource, updateSupervisorSource,
   createOperatorTaskOwner, runComputerUseTask, summarizeApproval, useOperatorRuntimeState,
 } from "@/core/computer-use";
-import type { ActionOwner, AgentActivity, ComputerUseRiskLevel, ComputerUseStatus, TextModelSelection, TextModelProviderPreset, SupervisorSource } from "@/core/computer-use";
+import type { ActionOwner, AgentActivity, AgentApproach, ComputerUseRiskLevel, ComputerUseStatus, TextModelSelection, TextModelProviderPreset, SupervisorSource } from "@/core/computer-use";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = {
@@ -59,6 +60,7 @@ export function ComputerUseOperatorConsole() {
   const [textModelSelection, setTextModelSelection] = useState<TextModelSelection | null>(null);
 
   const [executionMode, setExecutionMode] = useState<ComputerUseStatus["execution_mode"] | null>(null);
+  const [agentApproach, setAgentApproach] = useState<AgentApproach | null>(null);
   const [visionRecovery, setVisionRecovery] = useState<boolean | null>(null);
   const [supervisorSource, setSupervisorSource] = useState<SupervisorSource | null>(null);
   const [supervisorApiConfigured, setSupervisorApiConfigured] = useState(false);
@@ -89,6 +91,13 @@ export function ComputerUseOperatorConsole() {
         setTextModelSelection(selection);
       } catch (err) {
         console.error("Failed to fetch text model selection:", err);
+      }
+
+      try {
+        const approachSelection = await getAgentApproachSelection();
+        setAgentApproach(approachSelection.approach);
+      } catch (err) {
+        console.error("Failed to fetch agent approach selection:", err);
       }
 
       try {
@@ -265,6 +274,13 @@ export function ComputerUseOperatorConsole() {
     void run(`switch-execution-mode-${mode}`, async () => {
       const selection = await updateExecutionModeSelection(mode);
       setExecutionMode(selection.execution_mode);
+    });
+  };
+
+  const handleSwitchApproach = (approach: AgentApproach) => {
+    void run(`switch-approach-${approach}`, async () => {
+      const selection = await updateAgentApproachSelection(approach);
+      setAgentApproach(selection.approach);
     });
   };
 
@@ -616,16 +632,33 @@ export function ComputerUseOperatorConsole() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Execution Mode</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Approach</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <ModeButton active={executionMode === "hybrid"} onClick={() => handleSwitchExecutionMode("hybrid")}>
-                      Normal
+                    <ModeButton active={agentApproach === "plan_execute"} onClick={() => handleSwitchApproach("plan_execute")}>
+                      Plan &amp; Execute
                     </ModeButton>
-                    <ModeButton active={executionMode === "vision_only"} onClick={() => handleSwitchExecutionMode("vision_only")}>
-                      Vision-Only
+                    <ModeButton active={agentApproach === "autonomous"} onClick={() => handleSwitchApproach("autonomous")}>
+                      Autonomous FARA
                     </ModeButton>
                   </div>
+                  <p className="text-[10px] leading-snug text-muted-foreground/70">
+                    Plan &amp; Execute breaks the task into steps for FARA. Autonomous lets the planner write one brief and FARA runs the whole task itself.
+                  </p>
                 </div>
+
+                {agentApproach !== "autonomous" ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase text-muted-foreground">Execution Mode</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <ModeButton active={executionMode === "hybrid"} onClick={() => handleSwitchExecutionMode("hybrid")}>
+                        Normal
+                      </ModeButton>
+                      <ModeButton active={executionMode === "vision_only"} onClick={() => handleSwitchExecutionMode("vision_only")}>
+                        Vision-Only
+                      </ModeButton>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground">Recovery Supervisor</p>

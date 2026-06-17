@@ -5,6 +5,8 @@ import type {
   ActionLifecycleRecord,
   ActionOwner,
   AgentActivity,
+  AgentApproach,
+  AgentApproachSelection,
   ComputerUseArchitecture,
   ComputerUseExecutionMode,
   ExecutionModeSelection,
@@ -66,6 +68,19 @@ export async function updateExecutionModeSelection(
   return requestJson<ExecutionModeSelection>("/execution-mode", {
     method: "POST",
     body: { execution_mode },
+  });
+}
+
+export async function getAgentApproachSelection(): Promise<AgentApproachSelection> {
+  return requestJson<AgentApproachSelection>("/approach");
+}
+
+export async function updateAgentApproachSelection(
+  approach: AgentApproach,
+): Promise<AgentApproachSelection> {
+  return requestJson<AgentApproachSelection>("/approach", {
+    method: "POST",
+    body: { approach },
   });
 }
 

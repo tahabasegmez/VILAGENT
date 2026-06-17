@@ -52,7 +52,7 @@ _BROWSER_GUIDANCE = """Web browser:
 * history_back returns to the previous page."""
 
 
-def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
+def _fara_tools_json(environment: str) -> str:
     pointer_actions = ["key", "type", "mouse_move", "left_click", "right_click", "double_click", "scroll", "wait", "finish_step"]
     tools = [
         {
@@ -87,13 +87,52 @@ def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
                 "required": ["action"]
             }
         })
+    return "\\n".join(json.dumps(t) for t in tools)
+
+
+def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
     environment_guidance = _BROWSER_GUIDANCE if environment == "browser" else _NATIVE_GUIDANCE
-    tools_str = "\\n".join(json.dumps(t) for t in tools)
     return _FARA_BASE_PROMPT.format(
         max_actions=max_actions,
         environment=environment,
         environment_guidance=environment_guidance,
-        tools_json=tools_str,
+        tools_json=_fara_tools_json(environment),
+    )
+
+
+_FARA_AUTONOMOUS_PROMPT = """You are FARA, an autonomous computer-use agent. You own the ENTIRE task from start to finish.
+Work step by step on your own: observe the current screenshot, decide the single best next action, perform it, observe the result, and continue until the whole task is genuinely done.
+Return exactly one <tool_call> JSON object per turn.
+You have a budget of about {max_actions} actions for the entire task. Use them efficiently; do not waste actions.
+Only return finish_step with status success once the COMPLETE task is accomplished and you can see the proof on screen. Return finish_step with status failure if the task is impossible or you are truly stuck.
+Do not stop early after a single sub-action — keep going until the overall goal is reached.
+
+Acting precisely:
+* Reason from the CURRENT screenshot, not from an idealized flow. Determine an element's coordinates by consulting the screenshot before you move the cursor.
+* Click buttons, links, and icons with the cursor tip in the CENTER of the element; do not click box edges.
+* If a click did not take effect (the screen did not change after waiting), adjust the coordinate slightly so the cursor tip visually lands on the element, then click again.
+* Use screenshot coordinates only for pointer actions (left_click, right_click, double_click, scroll, mouse_move). For type and key actions, act on the currently focused control and omit coordinates.
+* After typing into a field, move focus deliberately (Tab, or click the next field) before typing the next value — never assume focus moved on its own.
+* The UI may differ from the ideal: popups, ads, cookie banners, dialogs, loading states, focus mismatch, localized labels, disabled or covered controls. Dismiss or wait out recoverable obstructions (close an overlay with its X, or key(['Escape'])) and continue toward the goal.
+* If something is still loading, prefer wait then re-check rather than clicking blindly.
+{environment_guidance}
+You are currently operating in the '{environment}' environment.
+
+<tools>
+{tools_json}
+</tools>
+<tool_call>
+{{"name":"computer_use","arguments":{{"action":"left_click","coordinate":[100,200]}}}}
+</tool_call>"""
+
+
+def _build_fara_autonomous_system_prompt(environment: str, max_actions: int) -> str:
+    environment_guidance = _BROWSER_GUIDANCE if environment == "browser" else _NATIVE_GUIDANCE
+    return _FARA_AUTONOMOUS_PROMPT.format(
+        max_actions=max_actions,
+        environment=environment,
+        environment_guidance=environment_guidance,
+        tools_json=_fara_tools_json(environment),
     )
 
 
@@ -114,12 +153,22 @@ class FaraVisionActionProvider:
         environment: str = "native",
         max_actions: int = 10,
         image_media_type: str = "image/png",
+        autonomous: bool = False,
     ) -> tuple[ActionCommand | None, dict[str, Any] | None]:
-        """Query FARA 7B for the next action to execute in the loop."""
+        """Query FARA 7B for the next action to execute in the loop.
+
+        ``autonomous=True`` frames the system prompt around completing the WHOLE
+        task end-to-end (FARA owns the full task), instead of one isolated plan step.
+        """
         if not self.is_enabled():
             return None, None
 
-        sys_prompt = _build_fara_system_prompt(environment, max_actions)
+        if autonomous:
+            sys_prompt = _build_fara_autonomous_system_prompt(environment, max_actions)
+            continuation = "Next screenshot. Choose the next action, or terminate when the whole task is complete."
+        else:
+            sys_prompt = _build_fara_system_prompt(environment, max_actions)
+            continuation = "Next screenshot. Choose the next action or terminate."
         compact_history = _compact_history(chat_history)
         image_url = f"data:{image_media_type};base64,{image_base64}"
         if not chat_history:
@@ -133,10 +182,11 @@ class FaraVisionActionProvider:
             })
         else:
             messages = [{"role": "system", "content": sys_prompt}, *compact_history]
+            label = "Task" if autonomous else "Task step"
             messages.append({
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Task step: {instruction}\nNext screenshot. Choose the next action or terminate."},
+                    {"type": "text", "text": f"{label}: {instruction}\n{continuation}"},
                     {"type": "image_url", "image_url": {"url": image_url}}
                 ]
             })
