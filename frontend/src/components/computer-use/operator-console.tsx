@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, LayoutList, Loader2, Pointer, RefreshCcw,
   Send, Settings, ShieldAlert, Square, Terminal, Trash2, XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -142,6 +142,15 @@ export function ComputerUseOperatorConsole() {
 
   const isRunning = busy === "run-computer-use-task";
   const liveAgent = agentActivity?.agents?.find(a => a.status === "running");
+  const liveThought = isRunning ? (liveAgent?.current_thought ?? null) : null;
+  const liveEvent = isRunning ? (liveAgent?.last_event ?? null) : null;
+
+  // Keep the latest message / live thinking in view (it lands at the bottom of the list).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [chatHistory.length, approvals.length, isRunning, liveThought, liveEvent]);
 
   const handleRunTask = () => {
     if (!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null || busy !== null) return;
@@ -249,7 +258,7 @@ export function ComputerUseOperatorConsole() {
       <div className="relative z-10 flex flex-1 overflow-hidden">
         {/* Chat column */}
         <section className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 space-y-5 overflow-y-auto px-4 py-6 md:px-8">
+          <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto px-4 py-6 md:px-8">
             {empty ? (
               <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
                 <div className="grid size-16 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/90 to-violet-600/90 shadow-[0_0_40px_-6px_rgba(192,132,252,0.7)] ring-1 ring-fuchsia-400/30">
