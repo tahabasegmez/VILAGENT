@@ -391,11 +391,12 @@ class PlaywrightBrowserSession:
         except (TypeError, ValueError):
             pixels = 0.0
         if pixels == 0.0:
-            # Default: scroll DOWN ~one screen. FARA's convention is negative = down.
+            # Default: scroll DOWN about one screen. FARA's convention is negative = down.
             pixels = -float(self._viewport_height) * 0.8
         # FARA convention: positive pixels = up, negative = down. Playwright deltaY:
-        # positive = down. So the wheel/window delta is -pixels.
-        delta_y = -pixels
+        # positive = down, so the delta is -pixels. Halved (operator preference: shorter
+        # scrolls) so the page does not jump too far in one step.
+        delta_y = -pixels * 0.5
         point = self._point(action)
         if point is not None:
             await self._page.mouse.move(point[0], point[1])
