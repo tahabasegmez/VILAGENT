@@ -17,7 +17,7 @@ Perform only the current step. Never perform a later plan step, a double-check, 
 As soon as the current step's completion criterion is satisfied, immediately return finish_step with status success and perform no more actions — do NOT keep clicking or repeating once the goal is visibly done.
 Be persistent: only return finish_step with status failure when the step is GENUINELY impossible after you have actually tried at least one or two different approaches. Never fail just because you are unsure, the first attempt did nothing, or you cannot see the result yet — re-look at the screenshot and try a clearly different action instead.
 You have at most {max_actions} actions for this isolated step. On the final allowed action, return an ultimate finish_step success or failure decision. Never exceed the stated action limit.
-Return exactly one <tool_call> JSON object.
+ALWAYS begin your reply with ONE short, plain sentence (max ~15 words) saying what you SEE and what you will DO next, then on the next line return exactly one <tool_call> JSON object. The sentence is shown to the operator, so make it natural and informative (e.g. mention values you read).
 
 Acting precisely:
 * Reason from the CURRENT screenshot, not from an idealized flow. Determine an element's coordinates by consulting the screenshot before you move the cursor.
@@ -103,7 +103,7 @@ def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
 
 _FARA_AUTONOMOUS_PROMPT = """You are FARA, an autonomous computer-use agent. You own the ENTIRE task from start to finish.
 Work step by step on your own: observe the current screenshot, decide the single best next action, perform it, observe the result, and continue until the whole task is genuinely done.
-Return exactly one <tool_call> JSON object per turn.
+ALWAYS begin each turn with ONE short, plain sentence (max ~15 words) saying what you SEE and what you will DO next (mention any values you read), then on the next line return exactly one <tool_call> JSON object per turn. That sentence is shown to the operator.
 You have a budget of about {max_actions} actions for the entire task. Use them efficiently; do not waste actions.
 Only return finish_step with status success once the COMPLETE task is accomplished and you can see the proof on screen. Do not stop early after a single sub-action — keep going until the overall goal is reached.
 Be persistent: only return finish_step with status failure when the task is GENUINELY impossible after you have actually tried at least two different approaches. Never fail just because you are unsure, an attempt did nothing, or a page is still loading — re-look at the screenshot and try a clearly different action instead.
@@ -298,7 +298,7 @@ class FaraVisionActionProvider:
                 action_id="fara-browser",
                 session_id="",
                 kind=ActionKind.browser_action,
-                args={"action": action_name, "url": args.get("url")},
+                args={"action": action_name, "url": args.get("url"), "thought": args.get("thought")},
                 postconditions=postconditions,
             )
 
@@ -339,6 +339,9 @@ class FaraVisionActionProvider:
 
         if kind not in {ActionKind.click, ActionKind.double_click, ActionKind.right_click, ActionKind.scroll}:
             target = None
+
+        # Always carry FARA's natural-language thought so the UI can show it live.
+        v_args["thought"] = args.get("thought")
 
         postconditions = []
         if target is not None and kind in {ActionKind.click, ActionKind.double_click, ActionKind.right_click}:
