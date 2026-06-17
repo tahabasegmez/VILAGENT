@@ -214,48 +214,19 @@ export function ComputerUseOperatorConsole() {
         
         const output = result.output && typeof result.output === "object" ? (result.output as Record<string, unknown>) : null;
         const status = typeof output?.status === "string" ? (output.status as string) : null;
+        const isFailure = status === "failed" || status === "blocked" || Boolean(result.error);
 
-        if (status === "failed" || result.error) {
-          // Always surface one clear failure message — never swallow a failure
-          // just because the run produced no agent text.
-          let errorText = result.error ?? "Task execution failed.";
-          const steps = output?.steps;
-          if (Array.isArray(steps)) {
-            const failedStep = steps.find((step) => {
-              if (step === null || typeof step !== "object") return false;
-              const stepStatus = (step as Record<string, unknown>).status;
-              return stepStatus === "failed" || stepStatus === "blocked";
-            }) as Record<string, unknown> | undefined;
-            if (typeof failedStep?.summary === "string" && failedStep.summary.trim()) {
-              errorText = failedStep.summary;
-            } else if (typeof output?.summary === "string" && output.summary.trim()) {
-              errorText = output.summary as string;
-            }
-          } else if (typeof output?.summary === "string" && output.summary.trim()) {
-            errorText = output.summary as string;
-          }
-          setChatHistory(prev => [...prev, {
-            id: crypto.randomUUID(),
-            role: "agent",
-            agentRole: "system",
-            text: `Execution failed: ${errorText}`,
-            createdAt: new Date(),
-          }]);
-        } else {
-          // Success: show a human-readable run summary, not a raw JSON dump.
-          const rawText = extractAgentResponseText(result.output);
-          if (rawText) {
-            const { text, thought, agentRole } = parseAgentResponse(rawText);
-            setChatHistory(prev => [...prev, {
-              id: crypto.randomUUID(),
-              role: "agent",
-              agentRole,
-              text,
-              thought,
-              createdAt: new Date(),
-            }]);
-          }
-        }
+        // The backend returns one friendly, human-readable run message (success OR
+        // failure). Render it directly — no raw JSON, no status dumps.
+        const friendly = extractAgentResponseText(result.output);
+        const text = friendly ?? (isFailure ? `I hit an error: ${result.error ?? "unknown error"}` : "Done.");
+        setChatHistory(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "agent",
+          agentRole: isFailure ? "system" : "planner",
+          text,
+          createdAt: new Date(),
+        }]);
       } catch (error) {
         setChatHistory(prev => [...prev, {
           id: crypto.randomUUID(),
@@ -396,9 +367,11 @@ export function ComputerUseOperatorConsole() {
                           </details>
                         )}
 
-                        <div className="whitespace-pre-wrap text-[13px] leading-relaxed">
-                          {msg.text}
-                        </div>
+                        {msg.role === "user" ? (
+                          <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{msg.text}</div>
+                        ) : (
+                          <RichText text={msg.text} />
+                        )}
                      </div>
                    </div>
                  ))}
@@ -872,6 +845,73 @@ function ModelPanel({
           </div>
         </details>
       )}
+    </div>
+  );
+}
+
+function renderInline(text: string, keyBase: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  let last = 0;
+  let i = 0;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      nodes.push(<strong key={`${keyBase}-${i}`} className="font-semibold text-foreground/90">{tok.slice(2, -2)}</strong>);
+    } else {
+      nodes.push(<em key={`${keyBase}-${i}`} className="text-muted-foreground">{tok.slice(1, -1)}</em>);
+    }
+    last = m.index + tok.length;
+    i++;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+// Lightweight rich-text renderer for agent messages: headlines, numbered steps,
+// check/cross lines, italic notes, and inline bold/italic — no markdown dependency.
+function RichText({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <div className="space-y-1 text-[13px] leading-relaxed">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} className="h-1" />;
+
+        const headline = /^([^*\s][^*]*\s)?\*\*(.+)\*\*$/.exec(trimmed);
+        if (headline) {
+          return (
+            <p key={idx} className="text-[13.5px] font-semibold text-foreground/90">
+              {headline[1] ?? ""}{renderInline(headline[2] ?? "", `h${idx}`)}
+            </p>
+          );
+        }
+        if (trimmed.startsWith("✓ ") || trimmed.startsWith("✗ ")) {
+          const ok = trimmed.startsWith("✓ ");
+          return (
+            <div key={idx} className="flex items-start gap-2">
+              {ok ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" /> : <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />}
+              <span>{renderInline(trimmed.slice(2), `c${idx}`)}</span>
+            </div>
+          );
+        }
+        const numbered = /^(\d+)\.\s+(.*)$/.exec(trimmed);
+        if (numbered) {
+          return (
+            <div key={idx} className="flex items-start gap-2">
+              <span className="mt-px font-mono text-[11px] font-semibold text-primary/70">{numbered[1]}.</span>
+              <span>{renderInline(numbered[2] ?? "", `n${idx}`)}</span>
+            </div>
+          );
+        }
+        const note = /^_(.+)_$/.exec(trimmed);
+        if (note) {
+          return <p key={idx} className="text-[12px] italic text-muted-foreground/80">{renderInline(note[1] ?? "", `i${idx}`)}</p>;
+        }
+        return <p key={idx}>{renderInline(trimmed, `p${idx}`)}</p>;
+      })}
     </div>
   );
 }

@@ -1523,19 +1523,78 @@ def _resolve_plan_execute_model_name(config: AppConfig) -> str:
     return config.models[0].name
 
 
+# Map internal step error codes to one short, plain-language explanation for the operator.
+_FRIENDLY_STEP_ERRORS = {
+    "no_progress_repeated_action": "I kept retrying the same spot without it taking effect.",
+    "fara_terminate_failure": "I decided this part couldn't be completed as asked.",
+    "step_uncertain_after_action_limit": "I couldn't confirm this finished within the action budget.",
+    "step_failed_after_action_limit": "I ran out of attempts before this part succeeded.",
+    "vision_model_unreachable": "I couldn't reach the vision model (FARA) — check its Colab/ngrok endpoint.",
+    "vision_action_failed": "The vision model didn't return a usable next action.",
+    "fara_disabled": "The vision model is disabled or unreachable.",
+    "playwright_unavailable": "The browser couldn't start (is Playwright/Edge installed?).",
+    "browser_session_failed": "The browser session couldn't start.",
+    "browser_step_failed": "I couldn't complete this on the page.",
+    "target_not_found": "I couldn't find that element on screen.",
+    "client_disconnected": "The run was cancelled.",
+}
+
+
+def _friendly_error(code: str | None, summary: str | None) -> str:
+    if code and code in _FRIENDLY_STEP_ERRORS:
+        return _FRIENDLY_STEP_ERRORS[code]
+    if summary and summary.strip():
+        return summary.strip()
+    if code:
+        return code.replace("_", " ")
+    return "an unexpected error"
+
+
 def _format_plan_execute_response(result: Any) -> str:
-    lines = [
-        "PLAN:",
-        *[f"{index + 1}. [{'vision' if step.requires_vision else 'browser' if step.environment == 'browser' else 'uia'}] {step.instruction}" for index, step in enumerate(result.plan.steps)],
-        "",
-        f"STATUS: {result.status.value}",
-        f"REPLANS: {result.replan_count}",
-        f"REQUESTS_ESTIMATE: {result.request_count_estimate}",
-    ]
-    if hasattr(result, 'summary') and result.summary:
-        lines.append(f"SUMMARY: {result.summary}")
-    for step in result.steps:
-        lines.append(f"- {step.step_id}: {step.status.value} {step.summary}".strip())
+    status = result.status.value
+    plan_steps = list(result.plan.steps)
+    outcomes = list(result.steps)
+    goal = (result.plan.goal or "").strip()
+    is_autonomous = len(plan_steps) == 1 and plan_steps[0].step_id == "autonomous"
+
+    # Match each executed step to its plan instruction (by step_id) for readable labels.
+    instructions = {s.step_id: (s.instruction or "").strip() for s in plan_steps}
+
+    def _label(outcome: Any) -> str:
+        return instructions.get(outcome.step_id) or (outcome.summary or outcome.step_id)
+
+    if status == "completed":
+        if is_autonomous:
+            brief = instructions.get("autonomous", goal) or goal
+            body = f"\n\n{brief}" if brief else ""
+            return f"✅ **Done.**{body}"
+        lines = ["✅ **Task complete.**"]
+        if goal:
+            lines += ["", f"*{goal}*"]
+        done = [o for o in outcomes if o.status.value == "completed"]
+        if done:
+            lines += ["", "**What I did:**"]
+            lines += [f"{i + 1}. {_label(o)}" for i, o in enumerate(done)]
+        return "\n".join(lines)
+
+    # failed / blocked
+    lines = ["⚠️ **I couldn't fully finish this task.**"]
+    if goal:
+        lines += ["", f"*{goal}*"]
+    if outcomes:
+        lines += ["", "**Progress:**"]
+        failed_reason = None
+        for o in outcomes:
+            ok = o.status.value == "completed"
+            mark = "✓" if ok else "✗"
+            lines.append(f"{mark} {_label(o)}")
+            if not ok and failed_reason is None:
+                failed_reason = _friendly_error(getattr(o, "error_code", None), getattr(o, "summary", None))
+        if failed_reason:
+            lines += ["", f"**Why it stopped:** {failed_reason}"]
+    else:
+        lines += ["", f"**Why it stopped:** {_friendly_error(None, getattr(result, 'summary', None))}"]
+    lines += ["", "_Tip: try rephrasing the task or splitting it into smaller, clearer steps._"]
     return "\n".join(lines)
 
 
