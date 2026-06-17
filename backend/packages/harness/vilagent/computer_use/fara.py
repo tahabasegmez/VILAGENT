@@ -18,10 +18,15 @@ As soon as the current step's completion criterion is satisfied, immediately ret
 If the step cannot be completed, return finish_step with status failure.
 You have at most {max_actions} actions for this isolated step. On the final allowed action, return an ultimate finish_step success or failure decision. Never exceed the stated action limit.
 Return exactly one <tool_call> JSON object.
-Use screenshot coordinates only for pointer actions. For type and key actions, operate on the currently focused control and omit coordinates.
-Reason from the current screenshot, not from an idealized flow. The UI may contain popups, ads, cookie banners, dialogs, loading states, focus mismatch, localized labels, disabled controls, or covered targets.
-If a recoverable obstruction directly blocks this step, use the smallest safe action to dismiss, wait for, or bypass it, then continue the same step. Do not interact with unrelated content or pursue a different goal.
-You are running with a retry limit of {max_actions} actions per step. Use your actions wisely.
+
+Acting precisely:
+* Reason from the CURRENT screenshot, not from an idealized flow. Determine an element's coordinates by consulting the screenshot before you move the cursor.
+* Click buttons, links, and icons with the cursor tip in the CENTER of the element; do not click box edges.
+* If a click did not take effect (the screen did not change after waiting), adjust the coordinate slightly so the cursor tip visually lands on the element, then click again.
+* Use screenshot coordinates only for pointer actions (left_click, right_click, double_click, scroll, mouse_move). For type and key actions, act on the currently focused control and omit coordinates.
+* The UI may differ from the ideal: popups, ads, cookie banners, dialogs, loading states, focus mismatch, localized labels, disabled or covered controls. If a recoverable obstruction directly blocks this step, use the smallest safe action to dismiss, wait for, or bypass it (e.g. close an overlay with its X, or key(['Escape'])), then continue the SAME step. Never interact with unrelated content or pursue a different goal.
+* If an application or page is still loading, prefer wait then re-check rather than clicking blindly.
+{environment_guidance}
 You are currently operating in the '{environment}' environment.
 
 <tools>
@@ -31,7 +36,24 @@ You are currently operating in the '{environment}' environment.
 {{"name":"computer_use","arguments":{{"action":"left_click","coordinate":[100,200]}}}}
 </tool_call>"""
 
+
+_NATIVE_GUIDANCE = """Native Windows desktop:
+* You interact with the visible desktop and app windows. To start an app you usually click its taskbar/desktop icon or use the Start menu; but app launching is normally handled deterministically by the planner, so focus on operating the app that is already open.
+* To scroll inside a panel or list, mouse_move() over it first, then scroll().
+* For menus and dialogs, click the exact control; if a dropdown is open, click the desired item rather than typing."""
+
+
+_BROWSER_GUIDANCE = """Web browser:
+* Navigate with browser_action visit_url for a known URL, and web_search for a query — prefer these over manually clicking the address bar.
+* When a separate scrollable container overlays the page, mouse_move() over it first, then scroll() to scroll within it.
+* If a popup/cookie/consent dialog appears and clicking its X or "Accept"/"Reject" button does not close it, try key(['Escape']).
+* On search bars with an auto-suggest popup (locations, recipients, products), after typing you may need to either press Enter to accept the highlighted suggestion or left_click() the suggestion/search button — do not assume typing alone submits.
+* For calendar/date widgets, click the arrows to change month and click the day cell; do not type dates into them.
+* history_back returns to the previous page."""
+
+
 def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
+    pointer_actions = ["key", "type", "mouse_move", "left_click", "right_click", "double_click", "scroll", "wait", "finish_step"]
     tools = [
         {
             "name": "computer_use",
@@ -39,51 +61,40 @@ def _build_fara_system_prompt(environment: str, max_actions: int) -> str:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["key", "type", "mouse_move", "left_click", "right_click", "double_click", "scroll", "wait", "finish_step"]},
-                    "keys": {"type": "array"},
-                    "text": {"type": "string"},
-                    "coordinate": {"type": "array"},
-                    "pixels": {"type": "number"},
-                    "time": {"type": "number"},
-                    "status": {"type": "string", "enum": ["success", "failure"]}
+                    "action": {"type": "string", "enum": pointer_actions},
+                    "keys": {"type": "array", "description": "Key names for action=key, e.g. ['Enter'], ['Control','a'], ['Escape']."},
+                    "text": {"type": "string", "description": "Text to type for action=type."},
+                    "coordinate": {"type": "array", "description": "[x, y] screenshot pixel for pointer actions."},
+                    "pixels": {"type": "number", "description": "Scroll amount for action=scroll; positive scrolls up, negative down."},
+                    "time": {"type": "number", "description": "Seconds to wait for action=wait."},
+                    "status": {"type": "string", "enum": ["success", "failure"], "description": "Outcome for action=finish_step."}
                 },
                 "required": ["action"]
-            }
-        },
-        {
-            "name": "bash",
-            "description": "Execute a terminal bash command.",
-            "parameters": {
-                "type": "object",
-                "properties": {"command": {"type": "string"}},
-                "required": ["command"]
-            }
-        },
-        {
-            "name": "python_script",
-            "description": "Execute python code using the d:/code/envs/win/vilagent/python.exe interpreter.",
-            "parameters": {
-                "type": "object",
-                "properties": {"code": {"type": "string"}},
-                "required": ["code"]
             }
         }
     ]
     if environment == "browser":
         tools.append({
             "name": "browser_action",
-            "description": "Browser specific actions.",
+            "description": "Browser navigation actions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["visit_url", "go_back", "go_forward", "refresh"]},
-                    "url": {"type": "string"}
+                    "action": {"type": "string", "enum": ["visit_url", "web_search", "history_back", "go_back", "go_forward", "refresh"]},
+                    "url": {"type": "string", "description": "Full URL for action=visit_url."},
+                    "query": {"type": "string", "description": "Search query for action=web_search."}
                 },
                 "required": ["action"]
             }
         })
+    environment_guidance = _BROWSER_GUIDANCE if environment == "browser" else _NATIVE_GUIDANCE
     tools_str = "\\n".join(json.dumps(t) for t in tools)
-    return _FARA_BASE_PROMPT.format(max_actions=max_actions, environment=environment, tools_json=tools_str)
+    return _FARA_BASE_PROMPT.format(
+        max_actions=max_actions,
+        environment=environment,
+        environment_guidance=environment_guidance,
+        tools_json=tools_str,
+    )
 
 
 class FaraVisionActionProvider:

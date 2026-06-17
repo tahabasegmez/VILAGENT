@@ -49,6 +49,7 @@ from vilagent.models import create_chat_model
 from vilagent.config.app_config import get_app_config
 from vilagent.computer_use.fara import FaraVisionActionProvider
 from vilagent.computer_use.image_ops import encode_image_for_vision, scale_point
+from vilagent.computer_use.browser_playwright import PlaywrightBrowserSession, PlaywrightUnavailableError
 from vilagent.config.computer_use_config import ComputerUseFaraModelConfig
 
 
@@ -197,7 +198,7 @@ Rules:
 - requires_vision: false only when the command has an unambiguous keyboard / UIA / DOM equivalent (keyboard, text-entry, UIA, or DOM equivalent); true when visual understanding of the screen is needed. Prefer deterministic input steps over visual actions. Prefer deterministic over visual.
 - To enter text, numbers, or a calculation, use ONE type_text step: action_kind="type_text", requires_vision=false, and put the exact literal string (with symbols like + - * / =) in args.text. The keyboard types it directly into the focused field; NEVER spell it out by visually clicking on-screen keys or buttons. Add a separate step to focus the field first only if it is not already focused.
 - To open an app, use ONE launch_app step (action_kind="launch_app", requires_vision=false) and set args.app_name to the app's Windows EXECUTABLE name (the short command you would type in the Run dialog). Give a single launchable name, NEVER a sentence, URL, or goal. The runtime launches the executable (also via App Paths / Start search), so a correct exe name is the most reliable. Launching and navigating are ALWAYS separate steps.
-- To open a web page, use a separate browser_action step AFTER the browser is open: action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL. Do not bundle "launch browser and go to X" into one step.
+- WEB / BROWSER tasks run in a dedicated browser the runtime manages for you. Do NOT plan a launch_app step to open a browser (Edge/Chrome) and do NOT switch to the desktop for web work. Mark every web step environment="browser". The FIRST browser step opens the managed browser automatically. To go to a page use action_kind="browser_action", args.action="visit_url", args.url the full "https://..." URL, as its own step. Everything inside a web page (clicking links/buttons, typing in fields, scrolling, reading) is a browser step; the browser is driven directly (real DOM mouse/keyboard), so coordinates and typing are reliable.
 - Plan the TRANSITIONS between steps, not only the actions. Spell it out simply: after one step finishes, the cursor/focus is somewhere; to do the next thing you must FIRST move focus there. Never assume the cursor is already in the right place, and never rely on the vision model to find and click each field. So whenever two consecutive steps touch different fields, controls, or regions, add an explicit deterministic step that moves focus first — a hotkey step (action_kind="hotkey", requires_vision=false, e.g. args.keys="TAB" for the next field, "ENTER" to confirm, or arrow keys) or a focus/click step — BEFORE the next action. Short examples (not one specific app):
     Email: type the recipient -> hotkey ENTER (commit the address / pick the highlighted suggestion) -> hotkey TAB (move to Subject) -> type Subject -> hotkey TAB (move to Body) -> type Body -> click Send.
     Login form: type username -> hotkey TAB -> type password -> hotkey ENTER.
@@ -311,6 +312,49 @@ class ComputerUseStepExecutor:
         self._vision_recovery = vision_recovery and supervisor_model_factory is not None
         self._supervisor_model_factory = supervisor_model_factory
         self._detected_vision_models: dict[tuple[str | None, str | None, str], str] = {}
+        # Lazily-created dedicated Playwright browser, reused across all browser steps
+        # of a run and closed by the orchestrator at the end.
+        self._browser_session: PlaywrightBrowserSession | None = None
+
+    async def _build_fara_provider(self, config) -> FaraVisionActionProvider:
+        """Construct the FARA action provider bound to the detected served model.
+
+        Raises on an unreachable endpoint so callers can fail the step cleanly.
+        """
+        base_url = config.computer_use.vision_fara_model.base_url
+        api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
+        default_model = config.computer_use.vision_fara_model.model_name
+        detected_model = await _detect_served_model_name_once(
+            self._detected_vision_models,
+            base_url,
+            api_key,
+            default_model,
+        )
+        return FaraVisionActionProvider(
+            ComputerUseFaraModelConfig(
+                enabled=True,
+                model_name=detected_model,
+                base_url=base_url,
+                api_key=api_key,
+                timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
+            )
+        )
+
+    async def _ensure_browser_session(self, config) -> PlaywrightBrowserSession:
+        if self._browser_session is None:
+            session = PlaywrightBrowserSession(
+                headless=config.computer_use.browser.playwright_headless,
+                viewport_width=config.computer_use.browser.viewport_width,
+                viewport_height=config.computer_use.browser.viewport_height,
+            )
+            await session.start()
+            self._browser_session = session
+        return self._browser_session
+
+    async def close_browser(self) -> None:
+        if self._browser_session is not None:
+            await self._browser_session.close()
+            self._browser_session = None
 
     def _selected_vision_provider(self, config) -> str:
         return "fara"
@@ -377,6 +421,17 @@ class ComputerUseStepExecutor:
         action_kind = step.action_kind or _infer_action_kind(step)
         try:
             config = get_app_config()
+            # Browser steps are driven through a dedicated Playwright browser (real
+            # DOM mouse/keyboard/navigation), never by pixel-clicking the desktop.
+            if step.environment == EnvironmentContext.browser:
+                return await self._execute_browser_step(
+                    step,
+                    action_kind=action_kind,
+                    session_id=resolved_session_id,
+                    config=config,
+                    on_activity_update=on_activity_update,
+                    cancel_check=cancel_check,
+                )
             # Typing, launching, and hotkeys are deterministic keyboard operations
             # and must never be done by visually clicking on-screen keys (which is
             # unreliable and lets the vision model falsely 'finish' after one click).
@@ -476,23 +531,12 @@ class ComputerUseStepExecutor:
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
     ) -> tuple[str, StepExecutionResult]:
         config = get_app_config()
-        
+
         if on_activity_update:
             on_activity_update("vision_executor", f"Running vision step: {step.instruction}", None)
-        
-        # Resolve the FARA endpoint. A remote (ngrok / Colab vLLM) base_url is used
-        # as-is; a local base_url is left untouched too. coordinates map 1:1.
-        base_url = config.computer_use.vision_fara_model.base_url
-        api_key = config.computer_use.vision_fara_model.api_key or "not-needed"
-        default_model = config.computer_use.vision_fara_model.model_name
 
         try:
-            detected_model = await _detect_served_model_name_once(
-                self._detected_vision_models,
-                base_url,
-                api_key,
-                default_model,
-            )
+            provider: Any = await self._build_fara_provider(config)
         except Exception as e:
             return session_id, StepExecutionResult(
                 step_id=step.step_id,
@@ -503,14 +547,6 @@ class ComputerUseStepExecutor:
                 summary=f"Vision model unreachable: {_exception_summary(e)}",
             )
 
-        fara_config = ComputerUseFaraModelConfig(
-            enabled=True,
-            model_name=detected_model,
-            base_url=base_url,
-            api_key=api_key,
-            timeout_seconds=config.computer_use.vision_fara_model.timeout_seconds,
-        )
-        provider: Any = FaraVisionActionProvider(fara_config)
         chat_history: list[dict[str, Any]] = []
         repeated_signature: str | None = None
         repeated_count = 0
@@ -857,6 +893,225 @@ class ComputerUseStepExecutor:
             summary=f"Fara vision loop ended with {last_error_code or last_status.value}",
         )
 
+    async def _execute_browser_step(
+        self,
+        step: ComputerUsePlanStep,
+        *,
+        action_kind: ActionKind,
+        session_id: str,
+        config: Any,
+        on_activity_update: Callable[[str, str, str | None], None] | None = None,
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    ) -> tuple[str, StepExecutionResult]:
+        """Run a ``browser`` environment step against the dedicated Playwright browser."""
+        try:
+            session = await self._ensure_browser_session(config)
+        except PlaywrightUnavailableError as exc:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.failed, error_code="playwright_unavailable", summary=str(exc),
+            )
+        except Exception as exc:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.failed, error_code="browser_session_failed",
+                summary=f"Could not start the browser: {_exception_summary(exc)}",
+            )
+
+        # The Playwright browser IS the browser, so a "launch the browser" step is a
+        # no-op success rather than a desktop app launch.
+        if action_kind == ActionKind.launch_app:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.completed, summary="Browser is managed by Playwright; no app launch needed.",
+            )
+
+        # Deterministic browser commands (navigate / type / hotkey) run once directly.
+        if not step.requires_vision and action_kind in {ActionKind.browser_action, ActionKind.type_text, ActionKind.hotkey}:
+            action = self._build_browser_deterministic_action(step, action_kind, session_id)
+            if on_activity_update:
+                on_activity_update("browser_executor", step.instruction, None)
+            ok, err = await session.run_action(action)
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.completed if ok else StepStatus.failed,
+                action_id=action.action_id,
+                action_status=ActionLifecycleStatus.succeeded if ok else ActionLifecycleStatus.failed,
+                error_code=None if ok else err,
+                summary=f"{action_kind.value} -> {'ok' if ok else err}",
+            )
+
+        return await self._execute_browser_vision_loop(
+            step,
+            session=session,
+            session_id=session_id,
+            config=config,
+            max_actions=_vision_action_limit(step, config.computer_use.budgets.vision_calls),
+            on_activity_update=on_activity_update,
+            cancel_check=cancel_check,
+        )
+
+    def _build_browser_deterministic_action(
+        self, step: ComputerUsePlanStep, action_kind: ActionKind, session_id: str
+    ) -> ActionCommand:
+        if action_kind == ActionKind.browser_action:
+            args = dict(step.args)
+            if not args.get("action"):
+                args["action"] = "visit_url" if args.get("url") else "refresh"
+        else:
+            args = _args_for_step(step, action_kind)
+        return ActionCommand(
+            action_id=f"browser-step-{step.step_id}-{uuid.uuid4().hex}",
+            session_id=session_id,
+            kind=action_kind,
+            args=args,
+            risk=_action_risk(step),
+        )
+
+    async def _execute_browser_vision_loop(
+        self,
+        step: ComputerUsePlanStep,
+        *,
+        session: PlaywrightBrowserSession,
+        session_id: str,
+        config: Any,
+        max_actions: int,
+        on_activity_update: Callable[[str, str, str | None], None] | None = None,
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    ) -> tuple[str, StepExecutionResult]:
+        """FARA drives the Playwright browser: screenshot -> action -> execute, looped."""
+        if on_activity_update:
+            on_activity_update("browser_executor", f"Running browser step: {step.instruction}", None)
+        try:
+            provider = await self._build_fara_provider(config)
+        except Exception as e:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.failed, error_code="vision_model_unreachable",
+                summary=f"Vision model unreachable: {_exception_summary(e)}",
+            )
+
+        chat_history: list[dict[str, Any]] = []
+        repeated_signature: str | None = None
+        repeated_count = 0
+        supervisor_calls = 0
+        nudge_count = 0
+        real_actions = 0
+        model_calls = 0
+        last_error_code: str | None = None
+        max_attempts = max(1, min(max_actions, 6))
+        if self._vision_recovery:
+            max_attempts = min(max_attempts + 2 * _MAX_SUPERVISOR_CALLS, 8)
+
+        def _failed(error_code: str, summary: str) -> tuple[str, StepExecutionResult]:
+            return session_id, StepExecutionResult(
+                step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                status=StepStatus.failed, error_code=error_code, summary=summary,
+            )
+
+        for _index in range(max_attempts + _MAX_VISION_NOOPS):
+            if cancel_check and await cancel_check():
+                return _failed("client_disconnected", "Client disconnected during execution")
+            try:
+                image_bytes = await session.screenshot()
+                image_base64, image_media_type, coord_scale = encode_image_for_vision(
+                    image_bytes,
+                    max_dim=getattr(config.computer_use, "vision_max_image_dimension", 0),
+                    jpeg_quality=getattr(config.computer_use, "vision_jpeg_quality", 85),
+                )
+                try:
+                    model_calls += 1
+                    action, new_history = await provider.get_next_action(
+                        instruction=_vision_step_command(step, max_actions=max_attempts),
+                        image_base64=image_base64,
+                        chat_history=chat_history,
+                        environment="browser",
+                        max_actions=max_attempts,
+                        image_media_type=image_media_type,
+                    )
+                except Exception as e:
+                    last_error_code = _exception_summary(e)
+                    if model_calls < max_attempts:
+                        await asyncio.sleep(0.5)
+                        continue
+                    return _failed("vision_action_failed", f"Failed to get next browser action: {last_error_code}")
+
+                chat_history = list(new_history or [])[-6:]
+                thought = action.args.get("thought") if action else None
+                if on_activity_update:
+                    on_activity_update("browser_executor", "Evaluating browser state...", thought)
+                if not action:
+                    return _failed("fara_disabled", "Fara model is disabled or unreachable")
+                if coord_scale != 1.0:
+                    action = _rescale_action_for_screen(action, coord_scale)
+
+                op = action.args.get("action")
+                if op == "terminate":
+                    if action.args.get("status") == "failure":
+                        return _failed("fara_terminate_failure", "Fara decided to terminate with failure")
+                    return session_id, StepExecutionResult(
+                        step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                        status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
+                        summary="Fara completed the browser step successfully",
+                    )
+                if action.kind == ActionKind.browser_action and op in {"wait", "mouse_move"}:
+                    if op == "wait":
+                        try:
+                            wait_seconds = float(action.args.get("time") or 1.0)
+                        except (TypeError, ValueError):
+                            wait_seconds = 1.0
+                        await asyncio.sleep(max(0.0, min(wait_seconds, 3.0)))
+                    if on_activity_update:
+                        on_activity_update("browser_executor", f"Vision model requested '{op}'; re-observing.", thought)
+                    continue
+
+                signature = _vision_action_signature(action)
+                if signature is not None and signature == repeated_signature:
+                    repeated_count += 1
+                else:
+                    repeated_signature = signature
+                    repeated_count = 0
+                if repeated_count >= 2:
+                    advice = None
+                    if self._vision_recovery and supervisor_calls < _MAX_SUPERVISOR_CALLS:
+                        advice = await self._get_recovery_advice(
+                            step=step, recent_thought=thought, image_base64=image_base64,
+                            image_media_type=image_media_type, on_activity_update=on_activity_update,
+                        )
+                        supervisor_calls += 1
+                    if advice is None and nudge_count < _MAX_VISION_NUDGES:
+                        nudge_count += 1
+                        advice = _GENERIC_STUCK_NUDGE
+                    if advice:
+                        repeated_signature = None
+                        repeated_count = 0
+                        chat_history.append({
+                            "role": "user",
+                            "content": f"<supervisor>\n{advice}\n</supervisor>\nDo exactly this now, then continue the original step.",
+                        })
+                        continue
+                    return _failed("no_progress_repeated_action", "Vision model repeated the same action without making progress.")
+
+                real_actions += 1
+                ok, err = await session.run_action(action)
+                if ok:
+                    return session_id, StepExecutionResult(
+                        step_id=step.step_id, environment=step.environment, requires_vision=step.requires_vision,
+                        status=StepStatus.completed, action_status=ActionLifecycleStatus.succeeded,
+                        summary="Browser step completed after its single command succeeded.",
+                    )
+                last_error_code = err
+                if real_actions >= max_attempts:
+                    return _failed("browser_step_failed", f"Browser step failed after {max_attempts} action(s) ({err}).")
+                chat_history.append({
+                    "role": "user",
+                    "content": f'<tool_response>\n{{"status": "retry", "error": "{err}"}}\n</tool_response>',
+                })
+            except Exception as exc:
+                return _failed(exc.__class__.__name__, f"browser loop failed: {exc}")
+
+        return _failed(last_error_code or "browser_step_incomplete", f"Browser vision loop ended ({last_error_code}).")
+
     async def _ensure_session(self, session_id: str | None) -> str:
         if session_id:
             try:
@@ -924,6 +1179,33 @@ class PlanExecuteComputerUseOrchestrator:
         self._max_steps = max_steps
 
     async def run(
+        self,
+        prompt: str,
+        *,
+        owner: ActionOwner,
+        session_id: str | None = None,
+        browser_session_id: str | None = None,
+        context: dict[str, Any] | None = None,
+        on_activity_update: Callable[[str, str, str | None], None] | None = None,
+        on_plan_update: Callable[[ComputerUsePlan, list[StepExecutionResult], str | None], None] | None = None,
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    ) -> PlanExecuteRunResult:
+        try:
+            return await self._run(
+                prompt,
+                owner=owner,
+                session_id=session_id,
+                browser_session_id=browser_session_id,
+                context=context,
+                on_activity_update=on_activity_update,
+                on_plan_update=on_plan_update,
+                cancel_check=cancel_check,
+            )
+        finally:
+            # Always tear down the dedicated Playwright browser at the end of a run.
+            await self._executor.close_browser()
+
+    async def _run(
         self,
         prompt: str,
         *,

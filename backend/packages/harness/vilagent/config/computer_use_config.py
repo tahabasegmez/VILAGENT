@@ -37,6 +37,11 @@ class ComputerUseBrowserConfig(BaseModel):
     enabled: bool = False
     allowed_domains: list[str] = Field(default_factory=list)
     allow_subdomains: bool = True
+    # Playwright-driven browser control for FARA browser steps. Headed by default so
+    # the operator sees the browser on the desktop; flip to headless for servers.
+    playwright_headless: bool = Field(default_factory=lambda: _env_bool("VILAGENT_BROWSER_HEADLESS", False))
+    viewport_width: int = Field(default=1280, ge=320, le=7680)
+    viewport_height: int = Field(default=800, ge=240, le=4320)
 
 
 class ComputerUseTextModelConfig(BaseModel):
@@ -129,7 +134,9 @@ class ComputerUseSupervisorModelConfig(BaseModel):
 class ComputerUseHostSafetyConfig(BaseModel):
     allowed_actions: list[ActionKind] | None = None
     audit_dir: str = ".vilagent/computer-use/audit"
-    physical_input_enabled: bool = False
+    # Operator-owned machine: native coordinate input (FARA's desktop clicks/scroll
+    # via pyautogui) is enabled by default. Set false to disable physical input.
+    physical_input_enabled: bool = True
 
 
 class ComputerUseConfig(BaseModel):

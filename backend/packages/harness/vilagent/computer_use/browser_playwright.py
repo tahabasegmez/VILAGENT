@@ -1,0 +1,309 @@
+"""Playwright-driven browser control for FARA browser steps.
+
+When a plan step runs in the ``browser`` environment, VILAGENT does NOT pixel-click
+the visible desktop browser. Instead it drives a dedicated Playwright Chromium: it
+screenshots the page, asks FARA for the next action, and executes that action
+against the page through Playwright (real mouse/keyboard/navigation on the DOM
+surface). This is far more reliable than coordinate-clicking a screenshot of an
+arbitrary desktop browser, and the viewport screenshot maps 1:1 to page mouse
+coordinates (device_scale_factor=1), so FARA's coordinates land precisely.
+
+The session is created lazily on the first browser step and reused for the rest of
+the run, then closed by the orchestrator.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+from urllib.parse import quote_plus
+
+from vilagent.computer_use.models import ActionCommand, ActionKind, TargetStrategy
+
+logger = logging.getLogger(__name__)
+
+# Map the keys FARA emits to Playwright key names. FARA uses the CUA / browser
+# vocabulary ("Enter", "Tab", "ArrowDown", ...); Playwright mostly accepts these
+# verbatim but a few aliases need normalising.
+_KEY_TO_PLAYWRIGHT = {
+    "enter": "Enter",
+    "return": "Enter",
+    "tab": "Tab",
+    "escape": "Escape",
+    "esc": "Escape",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "del": "Delete",
+    "space": " ",
+    "spacebar": " ",
+    "up": "ArrowUp",
+    "arrowup": "ArrowUp",
+    "down": "ArrowDown",
+    "arrowdown": "ArrowDown",
+    "left": "ArrowLeft",
+    "arrowleft": "ArrowLeft",
+    "right": "ArrowRight",
+    "arrowright": "ArrowRight",
+    "pageup": "PageUp",
+    "pagedown": "PageDown",
+    "home": "Home",
+    "end": "End",
+    "ctrl": "Control",
+    "control": "Control",
+    "alt": "Alt",
+    "shift": "Shift",
+    "cmd": "Meta",
+    "meta": "Meta",
+    "win": "Meta",
+    "super": "Meta",
+}
+
+
+def _playwright_key(token: str) -> str:
+    text = str(token).strip()
+    if not text:
+        return text
+    return _KEY_TO_PLAYWRIGHT.get(text.casefold(), text if len(text) == 1 else text.capitalize())
+
+
+class PlaywrightUnavailableError(RuntimeError):
+    """Raised when the playwright package or its browser binary is missing."""
+
+
+class PlaywrightBrowserSession:
+    """A single dedicated Chromium page that FARA drives through Playwright."""
+
+    def __init__(
+        self,
+        *,
+        headless: bool = False,
+        viewport_width: int = 1280,
+        viewport_height: int = 800,
+        downloads_folder: str | None = None,
+        nav_timeout_ms: int = 30000,
+    ):
+        self._headless = headless
+        self._viewport_width = viewport_width
+        self._viewport_height = viewport_height
+        self._downloads_folder = downloads_folder
+        self._nav_timeout_ms = nav_timeout_ms
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._context: Any = None
+        self._page: Any = None
+        self._started = False
+
+    @property
+    def viewport(self) -> tuple[int, int]:
+        return (self._viewport_width, self._viewport_height)
+
+    async def start(self) -> None:
+        if self._started:
+            return
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise PlaywrightUnavailableError(
+                "playwright is not installed; run 'python -m pip install playwright' "
+                "and 'python -m playwright install chromium'."
+            ) from exc
+        self._playwright = await async_playwright().start()
+        try:
+            self._browser = await self._playwright.chromium.launch(headless=self._headless)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            await self._safe_stop_playwright()
+            raise PlaywrightUnavailableError(
+                "Could not launch Chromium; run 'python -m playwright install chromium'. "
+                f"Underlying error: {exc}"
+            ) from exc
+        # device_scale_factor=1 keeps screenshot pixels == page mouse coordinates so
+        # FARA's coordinates land exactly where it intends.
+        self._context = await self._browser.new_context(
+            viewport={"width": self._viewport_width, "height": self._viewport_height},
+            device_scale_factor=1,
+            accept_downloads=bool(self._downloads_folder),
+        )
+        self._context.set_default_timeout(self._nav_timeout_ms)
+        self._page = await self._context.new_page()
+        self._started = True
+
+    @property
+    def current_url(self) -> str:
+        try:
+            return self._page.url if self._page is not None else ""
+        except Exception:
+            return ""
+
+    async def screenshot(self) -> bytes:
+        """PNG bytes of the current viewport (not full page) for the vision model."""
+        assert self._page is not None
+        await self._settle()
+        try:
+            return await self._page.screenshot(type="png", full_page=False, timeout=15000)
+        except Exception:
+            # A stuck navigation can block the screenshot; stop loading and retry once.
+            try:
+                await self._page.evaluate("window.stop()")
+            except Exception:
+                pass
+            return await self._page.screenshot(type="png", full_page=False, timeout=15000)
+
+    async def run_action(self, action: ActionCommand) -> tuple[bool, str | None]:
+        """Execute one FARA-derived action on the page. Returns (succeeded, error_code)."""
+        assert self._page is not None
+        try:
+            if action.kind in (ActionKind.click, ActionKind.double_click, ActionKind.right_click):
+                return await self._click(action)
+            if action.kind == ActionKind.type_text:
+                return await self._type(action)
+            if action.kind == ActionKind.hotkey:
+                return await self._keypress(action)
+            if action.kind == ActionKind.scroll:
+                return await self._scroll(action)
+            if action.kind == ActionKind.browser_action:
+                return await self._browser_action(action)
+            return False, f"browser_unsupported_action:{action.kind.value}"
+        except Exception as exc:
+            return False, f"browser_action_error:{exc.__class__.__name__}"
+
+    def _point(self, action: ActionCommand) -> tuple[float, float] | None:
+        target = action.target
+        if target is not None and target.strategy == TargetStrategy.coordinate and isinstance(target.selector, dict):
+            point = target.selector.get("point")
+            if isinstance(point, (list, tuple)) and len(point) == 2:
+                return float(point[0]), float(point[1])
+        coord = action.args.get("coordinate")
+        if isinstance(coord, (list, tuple)) and len(coord) == 2:
+            return float(coord[0]), float(coord[1])
+        return None
+
+    async def _click(self, action: ActionCommand) -> tuple[bool, str | None]:
+        point = self._point(action)
+        if point is None:
+            return False, "browser_click_missing_coordinate"
+        x, y = point
+        button = "right" if action.kind == ActionKind.right_click else "left"
+        click_count = 2 if action.kind == ActionKind.double_click else 1
+        new_page = await self._click_and_capture_popup(x, y, button=button, click_count=click_count)
+        if new_page is not None:
+            self._page = new_page
+        return True, None
+
+    async def _click_and_capture_popup(self, x: float, y: float, *, button: str, click_count: int):
+        """Click and, if it opens a new tab, adopt that tab as the active page."""
+        try:
+            async with self._page.expect_event("popup", timeout=1000) as popup_info:
+                await self._page.mouse.click(x, y, button=button, click_count=click_count, delay=20)
+                new_page = await popup_info.value
+                try:
+                    await new_page.bring_to_front()
+                    await new_page.wait_for_load_state("domcontentloaded", timeout=self._nav_timeout_ms)
+                except Exception:
+                    pass
+                return new_page
+        except Exception:
+            # No popup within the window; the click itself already happened.
+            return None
+
+    async def _type(self, action: ActionCommand) -> tuple[bool, str | None]:
+        text = str(action.args.get("text", ""))
+        if action.args.get("delete_existing_text"):
+            await self._page.keyboard.press("Control+A")
+            await self._page.keyboard.press("Backspace")
+        await self._page.keyboard.type(text, delay=15)
+        if action.args.get("press_enter"):
+            await self._page.keyboard.press("Enter")
+        return True, None
+
+    async def _keypress(self, action: ActionCommand) -> tuple[bool, str | None]:
+        raw = action.args.get("keys")
+        tokens: list[str]
+        if isinstance(raw, str):
+            tokens = [part for part in raw.replace("+", " ").split() if part]
+        elif isinstance(raw, (list, tuple)):
+            tokens = [str(part) for part in raw]
+        else:
+            tokens = []
+        if not tokens:
+            return False, "browser_keypress_missing_keys"
+        mapped = [_playwright_key(tok) for tok in tokens]
+        # Chord: hold modifiers down, press, release in reverse (matches FARA's `key`).
+        for key in mapped:
+            await self._page.keyboard.down(key)
+        for key in reversed(mapped):
+            await self._page.keyboard.up(key)
+        return True, None
+
+    async def _scroll(self, action: ActionCommand) -> tuple[bool, str | None]:
+        try:
+            pixels = float(action.args.get("amount") or action.args.get("pixels") or 0)
+        except (TypeError, ValueError):
+            pixels = 0.0
+        if pixels == 0.0:
+            pixels = float(self._viewport_height) * 0.8  # default: scroll down ~one screen
+        point = self._point(action)
+        if point is not None:
+            await self._page.mouse.move(point[0], point[1])
+        # FARA: positive pixels scroll up. Playwright wheel: positive deltaY scrolls down.
+        await self._page.mouse.wheel(0, -pixels)
+        return True, None
+
+    async def _browser_action(self, action: ActionCommand) -> tuple[bool, str | None]:
+        op = str(action.args.get("action") or "")
+        if op == "visit_url":
+            url = str(action.args.get("url") or "").strip()
+            if not url:
+                return False, "browser_visit_missing_url"
+            if "://" not in url:
+                url = "https://" + url
+            await self._page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
+            return True, None
+        if op == "web_search":
+            query = str(action.args.get("query") or action.args.get("text") or "").strip()
+            if not query:
+                return False, "browser_search_missing_query"
+            await self._page.goto(
+                f"https://www.bing.com/search?q={quote_plus(query)}",
+                wait_until="domcontentloaded",
+                timeout=self._nav_timeout_ms,
+            )
+            return True, None
+        if op in ("history_back", "go_back"):
+            await self._page.go_back(timeout=self._nav_timeout_ms)
+            return True, None
+        if op == "go_forward":
+            await self._page.go_forward(timeout=self._nav_timeout_ms)
+            return True, None
+        if op == "refresh":
+            await self._page.reload(timeout=self._nav_timeout_ms)
+            return True, None
+        return False, f"browser_unsupported_operation:{op or 'none'}"
+
+    async def _settle(self) -> None:
+        try:
+            await self._page.wait_for_load_state("domcontentloaded", timeout=3000)
+        except Exception:
+            pass
+        await asyncio.sleep(0.2)
+
+    async def close(self) -> None:
+        for closer in (
+            getattr(self._context, "close", None),
+            getattr(self._browser, "close", None),
+        ):
+            if closer is not None:
+                try:
+                    await closer()
+                except Exception:
+                    pass
+        await self._safe_stop_playwright()
+        self._started = False
+        self._page = self._context = self._browser = self._playwright = None
+
+    async def _safe_stop_playwright(self) -> None:
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass

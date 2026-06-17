@@ -44,7 +44,7 @@ def test_computer_use_is_disabled_by_default(monkeypatch):
     assert config.desktop_lease_stale_after_seconds == 30
     assert config.host_safety.allowed_actions is None
     assert config.host_safety.audit_dir == ".vilagent/computer-use/audit"
-    assert config.host_safety.physical_input_enabled is False
+    assert config.host_safety.physical_input_enabled is True
     assert config.observation.max_history_per_session == 100
     assert config.observation.storage_path == ".vilagent/computer-use/observations"
     assert config.observation.max_storage_bytes_per_session == 536870912

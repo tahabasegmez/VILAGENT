@@ -39,7 +39,7 @@ from vilagent.computer_use.windows.action import WindowsUIAActionProvider, creat
 from vilagent.computer_use.windows.bootstrap import create_browser_runtime, create_windows_session_service, create_windows_uia_provider
 from vilagent.computer_use.windows.desktop_safety import WindowsDesktopSafetyProvider
 from vilagent.computer_use.windows.hotkey import WindowsGlobalHotkeyListener
-from vilagent.computer_use.windows.input import WindowsPhysicalInputProvider, WindowsRoutedActionProvider, send_input_click
+from vilagent.computer_use.windows.input import WindowsPhysicalInputProvider, WindowsRoutedActionProvider, pyautogui_click
 from vilagent.computer_use.windows.target import WindowsUIATargetProvider
 from vilagent.computer_use.windows.uia import WindowsUIAProvider
 from vilagent.computer_use.windows.verification import WindowsUIAVerificationProvider
@@ -156,7 +156,7 @@ class WindowsAgentHost:
             semantic,
             WindowsPhysicalInputProvider(
                 enabled=config.host_safety.physical_input_enabled,
-                click_injector=physical_click_injector if physical_click_injector is not None else send_input_click,
+                click_injector=physical_click_injector if physical_click_injector is not None else pyautogui_click,
                 injection_guard=self._physical_input_guard,
             ),
             BrowserRuntimeActionProvider(browser_runtime, self._browser_policy)
