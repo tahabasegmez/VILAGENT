@@ -77,16 +77,23 @@ class WindowsUIAActionProvider:
         app_name = str(action.args.get("app_name") or action.args.get("command") or "").strip()
         if not app_name:
             return NativeActionResult(succeeded=False, error_code="app_name_required", error_message="Launch action requires app_name.")
-        # 1. Direct executable on PATH (calc, notepad, cmd, explorer, mspaint).
+        # PRIMARY: open it like a person would — press the Windows key, type the name in
+        # the Start search, and open the top result. This is the most reliable way and
+        # matches Store apps / display names that plain CreateProcess cannot resolve.
+        try:
+            await asyncio.to_thread(self._app_search_launcher, app_name)
+            return NativeActionResult(succeeded=True, details={"mode": "windows_start_search", "app": app_name})
+        except Exception:
+            pass
+        # FALLBACK 1: direct executable on PATH (calc, notepad, cmd, explorer, mspaint).
         try:
             subprocess.Popen([app_name], shell=False)
             return NativeActionResult(succeeded=True, details={"mode": "direct_app_launch", "app": app_name})
         except (FileNotFoundError, OSError):
             pass
-        except Exception as direct_error:
-            return NativeActionResult(succeeded=False, error_code="launch_app_failed", error_message=str(direct_error), details={"requested_app": app_name})
-        # 2. Shell `start` resolves App Paths (msedge, chrome, winword, excel) the way
-        #    the Run dialog does, which plain CreateProcess/Popen does not.
+        except Exception:
+            pass
+        # FALLBACK 2: shell `start` resolves App Paths the way the Run dialog does.
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -99,17 +106,12 @@ class WindowsUIAActionProvider:
                 return NativeActionResult(succeeded=True, details={"mode": "shell_start", "app": app_name})
         except Exception:
             pass
-        # 3. Windows Start menu search fallback (best effort).
-        try:
-            await asyncio.to_thread(self._app_search_launcher, app_name)
-            return NativeActionResult(succeeded=True, details={"mode": "windows_start_search", "app": app_name})
-        except Exception as search_error:
-            return NativeActionResult(
-                succeeded=False,
-                error_code="launch_app_failed",
-                error_message=f"Could not launch '{app_name}': {search_error}",
-                details={"requested_app": app_name},
-            )
+        return NativeActionResult(
+            succeeded=False,
+            error_code="launch_app_failed",
+            error_message=f"Could not launch '{app_name}'.",
+            details={"requested_app": app_name},
+        )
 
     async def _type_text(self, action: ActionCommand) -> NativeActionResult:
         try:
@@ -162,11 +164,14 @@ def _launch_from_windows_start_search(app_name: str) -> None:
     search_text = " ".join(app_name.split())
     if not search_text:
         raise ValueError("Windows Start search requires an app name")
+    # Open Start, let it focus its search box, type the app name, wait for results to
+    # rank, then open the top hit with Enter.
     keyboard.send_keys("{VK_LWIN}")
-    time.sleep(0.4)
+    time.sleep(0.7)
     keyboard.send_keys(search_text, with_spaces=True, vk_packet=True)
-    time.sleep(0.8)
+    time.sleep(1.0)
     keyboard.send_keys("{ENTER}")
+    time.sleep(0.5)
 
 
 def _navigate_focused_browser(url: str) -> None:

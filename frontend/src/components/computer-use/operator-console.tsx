@@ -343,9 +343,12 @@ export function ComputerUseOperatorConsole() {
                         <span className="shimmer">{liveAgent?.last_event ?? "Working…"}</span>
                       </div>
                       {liveAgent?.current_thought && (
-                        <p className="shimmer flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-400">
+                        <p
+                          key={liveAgent.current_thought}
+                          className="flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-bottom-1"
+                        >
                           <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
-                          <span className="line-clamp-3">{liveAgent.current_thought}</span>
+                          <span className="shimmer line-clamp-3">{liveAgent.current_thought}</span>
                         </p>
                       )}
                     </div>
@@ -681,16 +684,6 @@ function ModelPanel({ icon, name, connection, summary }: { icon: ReactNode; name
         <Metric label="Requests" value={summary.requests.toString()} />
         <Metric label="Tokens" value={summary.tokens.toLocaleString()} />
       </div>
-      {running && (summary.thinking || summary.lastEvent) && (
-        <details className="mt-2 rounded-lg border border-white/8 bg-black/20" open={Boolean(summary.thinking)}>
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-fuchsia-300/70 [&::-webkit-details-marker]:hidden">
-            <BrainCircuit className="size-3 animate-pulse" /> {summary.thinking ? "Thinking" : "Status"}
-          </summary>
-          <div className="whitespace-pre-wrap border-t border-white/8 px-2.5 pb-2 pt-1.5 font-mono text-[10px] leading-relaxed text-zinc-400">
-            {summary.thinking ?? summary.lastEvent}
-          </div>
-        </details>
-      )}
     </div>
   );
 }
