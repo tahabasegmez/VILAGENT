@@ -189,6 +189,7 @@ export function ComputerUseOperatorConsole() {
   const [floatingMode, setFloatingMode] = useState(false);
   const [floatDismissed, setFloatDismissed] = useState(false);
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
+  const [floatOutcome, setFloatOutcome] = useState<"success" | "failed" | null>(null);
   const pipWindowRef = useRef<Window | null>(null);
 
   // Wire a freshly-opened separate window into React: copy the app's stylesheets so
@@ -267,16 +268,27 @@ export function ComputerUseOperatorConsole() {
   }, []);
 
   // Collapse the main view to a placeholder once the agent starts acting (not during
-  // planning); restore + close the floating window when the run ends.
+  // planning). When the run ends, linger on a Done/Failed badge in the floating window
+  // for a moment, then tear everything down.
   useEffect(() => {
     if (!isRunning) {
+      if (pipWindowRef.current && floatOutcome) {
+        const t = setTimeout(() => {
+          setFloatingMode(false);
+          setFloatDismissed(false);
+          closeFloatingWindow();
+          setFloatOutcome(null);
+        }, 2000);
+        return () => clearTimeout(t);
+      }
       setFloatingMode(false);
       setFloatDismissed(false);
       closeFloatingWindow();
+      setFloatOutcome(null);
       return;
     }
     if (inAction && !floatDismissed) setFloatingMode(true);
-  }, [isRunning, inAction, floatDismissed, closeFloatingWindow]);
+  }, [isRunning, inAction, floatDismissed, closeFloatingWindow, floatOutcome]);
 
   // Keep the real window sized to its content as plan steps come in.
   useEffect(() => {
@@ -319,12 +331,14 @@ export function ComputerUseOperatorConsole() {
         const output = result.output && typeof result.output === "object" ? (result.output as Record<string, unknown>) : null;
         const taskStatus = typeof output?.status === "string" ? (output.status as string) : null;
         const isFailure = taskStatus === "failed" || taskStatus === "blocked" || Boolean(result.error);
+        setFloatOutcome(isFailure ? "failed" : "success");
         const friendly = extractAgentResponseText(result.output);
         const text = friendly ?? (isFailure ? `I hit an error: ${result.error ?? "unknown error"}` : "Done.");
         setChatHistory(prev => [...prev, {
           id: crypto.randomUUID(), role: "agent", agentRole: isFailure ? "system" : "planner", text, createdAt: new Date(),
         }]);
       } catch (error) {
+        setFloatOutcome("failed");
         setChatHistory(prev => [...prev, {
           id: crypto.randomUUID(), role: "agent", agentRole: "system",
           text: error instanceof Error ? `System error: ${error.message}` : "An unexpected system error occurred.",
@@ -382,6 +396,25 @@ export function ComputerUseOperatorConsole() {
   // or an in-view overlay as a fallback.
   const floatingPanelInner = (
     <>
+      {/* Done / Failed badge that lingers over the panel right before it closes. */}
+      {floatOutcome && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0c0712]/95 backdrop-blur-sm duration-300 animate-in fade-in">
+          <div className={cn(
+            "grid size-16 place-items-center rounded-full ring-2 duration-500 animate-in zoom-in-50",
+            floatOutcome === "success"
+              ? "bg-emerald-500/15 text-emerald-400 ring-emerald-400/50 shadow-[0_0_44px_-6px_rgba(16,185,129,0.75)]"
+              : "bg-red-500/15 text-red-400 ring-red-400/50 shadow-[0_0_44px_-6px_rgba(244,63,94,0.75)]",
+          )}>
+            {floatOutcome === "success" ? <Check className="size-8" /> : <XCircle className="size-8" />}
+          </div>
+          <p className={cn(
+            "text-sm font-semibold tracking-wide delay-150 duration-500 animate-in fade-in slide-in-from-bottom-1",
+            floatOutcome === "success" ? "text-emerald-300" : "text-red-300",
+          )}>
+            {floatOutcome === "success" ? "Done" : "Failed"}
+          </p>
+        </div>
+      )}
       {/* The header is the drag handle for the frameless Electron window. */}
       <div className="flex items-center justify-between border-b border-white/8 px-3 py-2" style={{ WebkitAppRegion: "drag" } as CSSProperties}>
         <div className="flex items-center gap-2">
@@ -728,7 +761,7 @@ export function ComputerUseOperatorConsole() {
       {/* Real separate OS window (Document Picture-in-Picture) over the desktop */}
       {pipWindow
         ? createPortal(
-            <div className="flex h-screen flex-col bg-[#0c0712] font-sans text-zinc-200">{floatingPanelInner}</div>,
+            <div className="relative flex h-screen flex-col bg-[#0c0712] font-sans text-zinc-200">{floatingPanelInner}</div>,
             pipWindow.document.body,
           )
         : floatingMode && (
