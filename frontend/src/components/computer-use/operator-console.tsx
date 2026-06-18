@@ -175,6 +175,14 @@ export function ComputerUseOperatorConsole() {
     (agentActivity?.agents ?? []).some(a => a.agent_id !== "computer_use_plan_execute" && a.status === "running")
   );
 
+  // The floating window grows/shrinks with the number of plan steps, clamped so it
+  // never gets uncomfortably small or large.
+  const FLOAT_WIDTH = 360;
+  const floatHeight = Math.min(
+    620,
+    Math.max(300, 176 + Math.max(planSteps.length, 1) * 30),
+  );
+
   // Floating compact panel: while the agent acts, pop a real chromeless OS window
   // (Document Picture-in-Picture) that floats over the Windows desktop; a button restores
   // the full UI. Falls back to an in-view overlay if the API is unavailable.
@@ -269,6 +277,13 @@ export function ComputerUseOperatorConsole() {
     }
     if (inAction && !floatDismissed) setFloatingMode(true);
   }, [isRunning, inAction, floatDismissed, closeFloatingWindow]);
+
+  // Keep the real window sized to its content as plan steps come in.
+  useEffect(() => {
+    if (pipWindow) {
+      try { pipWindow.resizeTo(FLOAT_WIDTH, floatHeight); } catch { /* not resizable */ }
+    }
+  }, [pipWindow, floatHeight]);
 
   const restoreFromFloating = () => {
     setFloatingMode(false);
@@ -717,7 +732,7 @@ export function ComputerUseOperatorConsole() {
             pipWindow.document.body,
           )
         : floatingMode && (
-            <div className="fixed right-4 top-1/2 z-[70] flex h-[460px] w-[300px] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-fuchsia-500/25 bg-[#0c0712]/95 shadow-[0_0_50px_-10px_rgba(192,132,252,0.55)] backdrop-blur-xl animate-in fade-in slide-in-from-right-4">
+            <div style={{ height: floatHeight, width: FLOAT_WIDTH }} className="fixed right-4 top-1/2 z-[70] flex -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-fuchsia-500/25 bg-[#0c0712]/95 opacity-75 shadow-[0_0_50px_-10px_rgba(192,132,252,0.55)] backdrop-blur-xl animate-in fade-in slide-in-from-right-4">
               {floatingPanelInner}
             </div>
           )}

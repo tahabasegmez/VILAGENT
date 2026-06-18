@@ -58,6 +58,13 @@ function createMainWindow() {
     return { action: "deny" };
   });
 
+  // The floating panel renders semi-transparent so the desktop shows through it.
+  mainWindow.webContents.on("did-create-window", (childWindow, details) => {
+    if (details.frameName === "vilagent-floating") {
+      childWindow.setOpacity(0.75);
+    }
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
