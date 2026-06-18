@@ -6,6 +6,7 @@ import {
   Send, Settings, ShieldAlert, Square, Terminal, Trash2, XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -174,10 +175,12 @@ export function ComputerUseOperatorConsole() {
     (agentActivity?.agents ?? []).some(a => a.agent_id !== "computer_use_plan_execute" && a.status === "running")
   );
 
-  // Floating compact panel: while the agent acts, collapse the console to a small
-  // overlay (right-center) so it stays out of the way; a button restores the full UI.
+  // Floating compact panel: while the agent acts, pop a real chromeless OS window
+  // (Document Picture-in-Picture) that floats over the Windows desktop; a button restores
+  // the full UI. Falls back to an in-view overlay if the API is unavailable.
   const [floatingMode, setFloatingMode] = useState(false);
   const [floatDismissed, setFloatDismissed] = useState(false);
+  const [pipWindow, setPipWindow] = useState<Window | null>(null);
   useEffect(() => {
     if (!isRunning) {
       setFloatingMode(false);
@@ -186,6 +189,49 @@ export function ComputerUseOperatorConsole() {
     }
     if (inAction && !floatDismissed) setFloatingMode(true);
   }, [isRunning, inAction, floatDismissed]);
+
+  useEffect(() => {
+    const dpip = typeof window !== "undefined" ? (window as unknown as { documentPictureInPicture?: { requestWindow: (o: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture : undefined;
+    if (floatingMode && dpip && !pipWindow) {
+      dpip.requestWindow({ width: 320, height: 460 }).then((win) => {
+        // Copy the app's stylesheets so Tailwind/theme work inside the separate window.
+        for (const sheet of Array.from(document.styleSheets)) {
+          try {
+            const css = Array.from((sheet as CSSStyleSheet).cssRules).map((r) => r.cssText).join("");
+            const style = win.document.createElement("style");
+            style.textContent = css;
+            win.document.head.appendChild(style);
+          } catch {
+            const href = (sheet as CSSStyleSheet).href;
+            if (href) {
+              const link = win.document.createElement("link");
+              link.rel = "stylesheet";
+              link.href = href;
+              win.document.head.appendChild(link);
+            }
+          }
+        }
+        win.document.documentElement.classList.add("dark");
+        win.document.body.style.margin = "0";
+        win.document.body.style.background = "#0c0712";
+        win.addEventListener("pagehide", () => {
+          setPipWindow(null);
+          setFloatingMode(false);
+          setFloatDismissed(true);
+        });
+        setPipWindow(win);
+      }).catch(() => undefined);
+    }
+    if (!floatingMode && pipWindow) {
+      try { pipWindow.close(); } catch { /* already closed */ }
+      setPipWindow(null);
+    }
+  }, [floatingMode, pipWindow]);
+
+  const restoreFromFloating = () => {
+    setFloatingMode(false);
+    setFloatDismissed(true);
+  };
 
   const handleRunTask = () => {
     if (!draft.owner.thread_id.trim() || !draft.task_prompt.trim() || autoApproveRiskThreshold === null || busy !== null) return;
@@ -270,6 +316,62 @@ export function ComputerUseOperatorConsole() {
   };
 
   const empty = chatHistory.length === 0 && approvals.length === 0;
+
+  // Inner content of the floating panel — rendered into a real PiP window when available,
+  // or an in-view overlay as a fallback.
+  const floatingPanelInner = (
+    <>
+      <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Loader2 className="size-3.5 animate-spin text-fuchsia-300" />
+          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200">VILAGENT</span>
+        </div>
+        <button type="button" title="Restore full view" onClick={restoreFromFloating} className="grid size-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-fuchsia-200">
+          <Maximize2 className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-2.5">
+        {planSteps.length === 0 ? (
+          <p className="text-[11px] italic text-zinc-500">Preparing…</p>
+        ) : (
+          <div className="space-y-1.5">
+            {planSteps.map((step) => {
+              const done = step.status === "completed";
+              const running = step.status === "running";
+              const error = step.status === "failed" || step.status === "blocked";
+              return (
+                <div key={step.step_id} className="flex items-start gap-2">
+                  <span className={cn(
+                    "mt-0.5 grid size-4 shrink-0 place-items-center rounded-full ring-1",
+                    done ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30"
+                      : running ? "bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-400/40 shadow-[0_0_10px_-2px_rgba(192,132,252,0.8)]"
+                      : error ? "bg-red-500/15 text-red-400 ring-red-500/30"
+                      : "bg-white/5 text-zinc-600 ring-white/10",
+                  )}>
+                    {done ? <Check className="size-2.5" /> : running ? <Loader2 className="size-2.5 animate-spin" /> : error ? <XCircle className="size-2.5" /> : <Circle className="size-1.5" />}
+                  </span>
+                  <p className={cn("text-[11px] leading-snug", done ? "text-zinc-500 line-through" : error ? "text-red-300" : running ? "text-zinc-100" : "text-zinc-400")}>{step.instruction}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {liveThinking.thought && (
+        <div className="border-t border-white/8 px-3 py-2">
+          <p key={liveThinking.thought} className="flex items-start gap-1.5 text-[10.5px] italic leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-bottom-1">
+            <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
+            <span className="shimmer line-clamp-3">{liveThinking.thought}</span>
+          </p>
+        </div>
+      )}
+      <div className="border-t border-white/8 p-2">
+        <button type="button" onClick={handleEmergencyStop} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-red-500 to-rose-600 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_16px_-6px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-[0.98]">
+          <Square className="size-3 fill-current" /> Stop
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <main className="relative flex h-screen flex-col overflow-hidden bg-[#0a0610] text-zinc-200">
@@ -561,61 +663,28 @@ export function ComputerUseOperatorConsole() {
       </div>
       </div>
 
-      {/* Floating compact panel (right-center) while the agent is driving the screen */}
-      {floatingMode && (
-        <div className="fixed right-4 top-1/2 z-[70] flex max-h-[82vh] w-[300px] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-fuchsia-500/25 bg-[#0c0712]/95 shadow-[0_0_50px_-10px_rgba(192,132,252,0.55)] backdrop-blur-xl animate-in fade-in slide-in-from-right-4">
-          <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
-            <div className="flex items-center gap-2">
-              <Loader2 className="size-3.5 animate-spin text-fuchsia-300" />
-              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200">VILAGENT</span>
-            </div>
-            <button type="button" title="Restore full view" onClick={() => { setFloatingMode(false); setFloatDismissed(true); }} className="grid size-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-fuchsia-200">
-              <Maximize2 className="size-3.5" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-3 py-2.5">
-            {planSteps.length === 0 ? (
-              <p className="text-[11px] italic text-zinc-500">Preparing…</p>
-            ) : (
-              <div className="space-y-1.5">
-                {planSteps.map((step) => {
-                  const done = step.status === "completed";
-                  const running = step.status === "running";
-                  const error = step.status === "failed" || step.status === "blocked";
-                  return (
-                    <div key={step.step_id} className="flex items-start gap-2">
-                      <span className={cn(
-                        "mt-0.5 grid size-4 shrink-0 place-items-center rounded-full ring-1",
-                        done ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30"
-                          : running ? "bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-400/40 shadow-[0_0_10px_-2px_rgba(192,132,252,0.8)]"
-                          : error ? "bg-red-500/15 text-red-400 ring-red-500/30"
-                          : "bg-white/5 text-zinc-600 ring-white/10",
-                      )}>
-                        {done ? <Check className="size-2.5" /> : running ? <Loader2 className="size-2.5 animate-spin" /> : error ? <XCircle className="size-2.5" /> : <Circle className="size-1.5" />}
-                      </span>
-                      <p className={cn("text-[11px] leading-snug", done ? "text-zinc-500 line-through" : error ? "text-red-300" : running ? "text-zinc-100" : "text-zinc-400")}>{step.instruction}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {liveThinking.thought && (
-            <div className="border-t border-white/8 px-3 py-2">
-              <p key={liveThinking.thought} className="flex items-start gap-1.5 text-[10.5px] italic leading-relaxed text-zinc-400 duration-300 animate-in fade-in slide-in-from-bottom-1">
-                <BrainCircuit className="mt-0.5 size-3 shrink-0 animate-pulse text-fuchsia-400/70" />
-                <span className="shimmer line-clamp-3">{liveThinking.thought}</span>
-              </p>
+      {/* Real separate OS window (Document Picture-in-Picture) over the desktop */}
+      {pipWindow
+        ? createPortal(
+            <div className="flex h-screen flex-col bg-[#0c0712] font-sans text-zinc-200">{floatingPanelInner}</div>,
+            pipWindow.document.body,
+          )
+        : floatingMode && (
+            <div className="fixed right-4 top-1/2 z-[70] flex h-[460px] w-[300px] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-fuchsia-500/25 bg-[#0c0712]/95 shadow-[0_0_50px_-10px_rgba(192,132,252,0.55)] backdrop-blur-xl animate-in fade-in slide-in-from-right-4">
+              {floatingPanelInner}
             </div>
           )}
 
-          <div className="border-t border-white/8 p-2">
-            <button type="button" onClick={handleEmergencyStop} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-red-500 to-rose-600 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_16px_-6px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-[0.98]">
-              <Square className="size-3 fill-current" /> Stop
-            </button>
+      {/* While the floating window is open, the main tab stays minimal but reachable. */}
+      {floatingMode && pipWindow && (
+        <div className="absolute inset-0 z-[40] flex flex-col items-center justify-center gap-4 text-center">
+          <div className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/80 to-violet-600/80 shadow-[0_0_36px_-6px_rgba(192,132,252,0.7)]">
+            <Maximize2 className="size-6 text-white" />
           </div>
+          <p className="text-[13px] text-zinc-300">Running in the floating window.</p>
+          <button type="button" onClick={restoreFromFloating} className="rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/10 px-4 py-1.5 text-[12px] font-medium text-fuchsia-100 transition-colors hover:bg-fuchsia-500/20">
+            Bring back the full view
+          </button>
         </div>
       )}
 
