@@ -181,56 +181,75 @@ export function ComputerUseOperatorConsole() {
   const [floatingMode, setFloatingMode] = useState(false);
   const [floatDismissed, setFloatDismissed] = useState(false);
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
+  const pipWindowRef = useRef<Window | null>(null);
+
+  // Opening a real OS window via the Document Picture-in-Picture API requires a
+  // transient user activation, so we MUST do it inside the send-button gesture
+  // (an automatic open later, after planning finishes, would be rejected). The
+  // window is up from send; its panel shows "Preparing…" until the agent acts.
+  const openFloatingWindow = useCallback(() => {
+    if (pipWindowRef.current) return;
+    const dpip = typeof window !== "undefined"
+      ? (window as unknown as { documentPictureInPicture?: { requestWindow: (o: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture
+      : undefined;
+    if (!dpip) return; // unsupported browser -> in-view fallback kicks in at action time
+    dpip.requestWindow({ width: 340, height: 480 }).then((win) => {
+      // Copy the app's stylesheets so Tailwind/theme work inside the separate window.
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          const css = Array.from((sheet as CSSStyleSheet).cssRules).map((r) => r.cssText).join("");
+          const style = win.document.createElement("style");
+          style.textContent = css;
+          win.document.head.appendChild(style);
+        } catch {
+          const href = (sheet as CSSStyleSheet).href;
+          if (href) {
+            const link = win.document.createElement("link");
+            link.rel = "stylesheet";
+            link.href = href;
+            win.document.head.appendChild(link);
+          }
+        }
+      }
+      win.document.documentElement.classList.add("dark");
+      win.document.body.style.margin = "0";
+      win.document.body.style.background = "#0c0712";
+      win.addEventListener("pagehide", () => {
+        pipWindowRef.current = null;
+        setPipWindow(null);
+        setFloatingMode(false);
+        setFloatDismissed(true);
+      });
+      pipWindowRef.current = win;
+      setPipWindow(win);
+    }).catch(() => undefined);
+  }, []);
+
+  const closeFloatingWindow = useCallback(() => {
+    const win = pipWindowRef.current;
+    if (win) {
+      try { win.close(); } catch { /* already closed */ }
+    }
+    pipWindowRef.current = null;
+    setPipWindow(null);
+  }, []);
+
+  // Collapse the main view to a placeholder once the agent starts acting (not during
+  // planning); restore + close the floating window when the run ends.
   useEffect(() => {
     if (!isRunning) {
       setFloatingMode(false);
       setFloatDismissed(false);
+      closeFloatingWindow();
       return;
     }
     if (inAction && !floatDismissed) setFloatingMode(true);
-  }, [isRunning, inAction, floatDismissed]);
-
-  useEffect(() => {
-    const dpip = typeof window !== "undefined" ? (window as unknown as { documentPictureInPicture?: { requestWindow: (o: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture : undefined;
-    if (floatingMode && dpip && !pipWindow) {
-      dpip.requestWindow({ width: 320, height: 460 }).then((win) => {
-        // Copy the app's stylesheets so Tailwind/theme work inside the separate window.
-        for (const sheet of Array.from(document.styleSheets)) {
-          try {
-            const css = Array.from((sheet as CSSStyleSheet).cssRules).map((r) => r.cssText).join("");
-            const style = win.document.createElement("style");
-            style.textContent = css;
-            win.document.head.appendChild(style);
-          } catch {
-            const href = (sheet as CSSStyleSheet).href;
-            if (href) {
-              const link = win.document.createElement("link");
-              link.rel = "stylesheet";
-              link.href = href;
-              win.document.head.appendChild(link);
-            }
-          }
-        }
-        win.document.documentElement.classList.add("dark");
-        win.document.body.style.margin = "0";
-        win.document.body.style.background = "#0c0712";
-        win.addEventListener("pagehide", () => {
-          setPipWindow(null);
-          setFloatingMode(false);
-          setFloatDismissed(true);
-        });
-        setPipWindow(win);
-      }).catch(() => undefined);
-    }
-    if (!floatingMode && pipWindow) {
-      try { pipWindow.close(); } catch { /* already closed */ }
-      setPipWindow(null);
-    }
-  }, [floatingMode, pipWindow]);
+  }, [isRunning, inAction, floatDismissed, closeFloatingWindow]);
 
   const restoreFromFloating = () => {
     setFloatingMode(false);
     setFloatDismissed(true);
+    closeFloatingWindow();
   };
 
   const handleRunTask = () => {
@@ -240,6 +259,9 @@ export function ComputerUseOperatorConsole() {
     patchDraft({ task_prompt: "" });
     setRunActive(true);
     setLiveThinking({ event: "Starting…", thought: null });
+    // Open the real floating OS window now, while we still hold the click's user
+    // activation (the API rejects an automatic open after planning completes).
+    openFloatingWindow();
 
     void run("run-computer-use-task", async () => {
       try {
