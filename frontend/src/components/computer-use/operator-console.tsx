@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, LayoutList, Loader2, Maximize2, Pointer, RefreshCcw,
   Send, Settings, ShieldAlert, Square, Terminal, Trash2, XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { Textarea } from "@/components/ui/textarea";
@@ -183,47 +183,71 @@ export function ComputerUseOperatorConsole() {
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
   const pipWindowRef = useRef<Window | null>(null);
 
-  // Opening a real OS window via the Document Picture-in-Picture API requires a
-  // transient user activation, so we MUST do it inside the send-button gesture
-  // (an automatic open later, after planning finishes, would be rejected). The
-  // window is up from send; its panel shows "Preparing…" until the agent acts.
-  const openFloatingWindow = useCallback(() => {
-    if (pipWindowRef.current) return;
-    const dpip = typeof window !== "undefined"
-      ? (window as unknown as { documentPictureInPicture?: { requestWindow: (o: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture
-      : undefined;
-    if (!dpip) return; // unsupported browser -> in-view fallback kicks in at action time
-    dpip.requestWindow({ width: 340, height: 480 }).then((win) => {
-      // Copy the app's stylesheets so Tailwind/theme work inside the separate window.
-      for (const sheet of Array.from(document.styleSheets)) {
-        try {
-          const css = Array.from((sheet as CSSStyleSheet).cssRules).map((r) => r.cssText).join("");
-          const style = win.document.createElement("style");
-          style.textContent = css;
-          win.document.head.appendChild(style);
-        } catch {
-          const href = (sheet as CSSStyleSheet).href;
-          if (href) {
-            const link = win.document.createElement("link");
-            link.rel = "stylesheet";
-            link.href = href;
-            win.document.head.appendChild(link);
-          }
+  // Wire a freshly-opened separate window into React: copy the app's stylesheets so
+  // Tailwind/theme work, theme the chrome, register teardown, and start the portal.
+  const decorateFloatingWindow = useCallback((win: Window) => {
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        const css = Array.from((sheet as CSSStyleSheet).cssRules).map((r) => r.cssText).join("");
+        const style = win.document.createElement("style");
+        style.textContent = css;
+        win.document.head.appendChild(style);
+      } catch {
+        const href = (sheet as CSSStyleSheet).href;
+        if (href) {
+          const link = win.document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          win.document.head.appendChild(link);
         }
       }
-      win.document.documentElement.classList.add("dark");
-      win.document.body.style.margin = "0";
-      win.document.body.style.background = "#0c0712";
-      win.addEventListener("pagehide", () => {
-        pipWindowRef.current = null;
-        setPipWindow(null);
-        setFloatingMode(false);
-        setFloatDismissed(true);
-      });
-      pipWindowRef.current = win;
-      setPipWindow(win);
-    }).catch(() => undefined);
+    }
+    win.document.title = "VILAGENT";
+    win.document.documentElement.classList.add("dark");
+    win.document.body.style.margin = "0";
+    win.document.body.style.background = "#0c0712";
+    win.addEventListener("pagehide", () => {
+      pipWindowRef.current = null;
+      setPipWindow(null);
+      setFloatingMode(false);
+      setFloatDismissed(true);
+    });
+    pipWindowRef.current = win;
+    setPipWindow(win);
   }, []);
+
+  // Pop a real, separate OS window. Opening one requires a transient user
+  // activation, so we MUST do it inside the send-button gesture (an automatic open
+  // later, after planning, would be rejected). We're running inside Electron, whose
+  // Chromium does not implement the Document Picture-in-Picture API cleanly (calling
+  // it tries to open an `about:` target and Windows shows a "find an app in the
+  // Store" popup); window.open creates a genuine separate BrowserWindow instead, and
+  // also works in plain Chromium browsers. The panel shows "Preparing…" until the
+  // agent acts.
+  const openFloatingWindow = useCallback(() => {
+    if (pipWindowRef.current) return;
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const isElectron = /electron/i.test(ua);
+    const dpip = !isElectron && typeof window !== "undefined"
+      ? (window as unknown as { documentPictureInPicture?: { requestWindow: (o: { width: number; height: number }) => Promise<Window> } }).documentPictureInPicture
+      : undefined;
+
+    const openPopup = () => {
+      try {
+        const win = window.open("", "vilagent-floating", "popup=yes,width=340,height=480");
+        if (win) decorateFloatingWindow(win);
+        // win === null -> blocked; the in-view fallback takes over at action time.
+      } catch {
+        /* blocked -> in-view fallback */
+      }
+    };
+
+    if (dpip) {
+      dpip.requestWindow({ width: 340, height: 480 }).then(decorateFloatingWindow).catch(openPopup);
+    } else {
+      openPopup();
+    }
+  }, [decorateFloatingWindow]);
 
   const closeFloatingWindow = useCallback(() => {
     const win = pipWindowRef.current;
@@ -343,12 +367,13 @@ export function ComputerUseOperatorConsole() {
   // or an in-view overlay as a fallback.
   const floatingPanelInner = (
     <>
-      <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
+      {/* The header is the drag handle for the frameless Electron window. */}
+      <div className="flex items-center justify-between border-b border-white/8 px-3 py-2" style={{ WebkitAppRegion: "drag" } as CSSProperties}>
         <div className="flex items-center gap-2">
           <Loader2 className="size-3.5 animate-spin text-fuchsia-300" />
           <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-200">VILAGENT</span>
         </div>
-        <button type="button" title="Restore full view" onClick={restoreFromFloating} className="grid size-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-fuchsia-200">
+        <button type="button" title="Restore full view" onClick={restoreFromFloating} style={{ WebkitAppRegion: "no-drag" } as CSSProperties} className="grid size-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-fuchsia-200">
           <Maximize2 className="size-3.5" />
         </button>
       </div>
@@ -387,7 +412,7 @@ export function ComputerUseOperatorConsole() {
           </p>
         </div>
       )}
-      <div className="border-t border-white/8 p-2">
+      <div className="border-t border-white/8 p-2" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
         <button type="button" onClick={handleEmergencyStop} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-red-500 to-rose-600 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_16px_-6px_rgba(244,63,94,0.9)] transition-transform hover:from-red-400 hover:to-rose-500 active:scale-[0.98]">
           <Square className="size-3 fill-current" /> Stop
         </button>

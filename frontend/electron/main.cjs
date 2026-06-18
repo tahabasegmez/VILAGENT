@@ -24,8 +24,37 @@ function createMainWindow() {
     },
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The operator console's floating panel opens itself via
+    // window.open("", "vilagent-floating", …). Allow it through as a real, separate,
+    // frameless always-on-top window that floats over the Windows desktop.
+    if (frameName === "vilagent-floating") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 360,
+          height: 520,
+          frame: false,
+          alwaysOnTop: true,
+          resizable: true,
+          maximizable: false,
+          fullscreenable: false,
+          backgroundColor: "#0c0712",
+          title: "VILAGENT",
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            preload: path.join(__dirname, "preload.cjs"),
+          },
+        },
+      };
+    }
+    // Real web links open in the user's default browser; anything else is dropped
+    // (never hand non-http targets to the shell — that pops the Microsoft Store).
+    if (/^https?:\/\//.test(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
