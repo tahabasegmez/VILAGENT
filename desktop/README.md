@@ -16,7 +16,7 @@ corepack pnpm test     # vitest
 corepack pnpm dist     # static UI + frozen gateway + installer in dist-electron/
 ```
 
-The UI is a full-screen HUD in `src/components/hud/`: `use-operator` holds the state and
+The UI is in `src/components/hud/`: `use-operator` holds the state and
 the run/stop actions, `hud.tsx` lays out the floating panels, `live-graph` draws the run's
 `trace` events with React Flow (`trace-node`, `flow-edge`), and `mini-hud` is the small
 always-on-top window shown while FARA acts. `src/core/computer-use/` is the API client and
