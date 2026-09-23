@@ -1,0 +1,28 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "js/ts.tsdk.path": "desktop/node_modules/typescript/lib"
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug Gateway",
+        "type": "debugpy",
+        "request": "launch",
+        "module": "vilagent",
+        "args": ["--port", "8001", "--data-dir", "${workspaceFolder}"],
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/agent",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/agent"
+        },
+        "justMyCode": false
+      }
+    ]
+  }
+}

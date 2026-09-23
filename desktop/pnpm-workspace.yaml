@@ -1,0 +1,6 @@
+packages: []
+
+# Electron's postinstall downloads the runtime binary, so it must be allowed to run.
+onlyBuiltDependencies:
+  - electron
+  - electron-winstaller

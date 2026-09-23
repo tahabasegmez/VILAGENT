@@ -1,0 +1,49 @@
+# Secrets and local configuration
+.env
+config.yaml
+
+# Runtime data (development runs keep it in the repository root)
+.vilagent/
+.vilagent_state.json
+connections.db
+logs/
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.benchmarks/
+agent/tmp_pytest/
+
+# Build output
+agent/build/
+agent/dist/
+desktop/.next/
+desktop/out/
+desktop/dist-electron/
+desktop/node_modules/
+*.tsbuildinfo
+next-env.d.ts
+
+# Editors and tools
+.idea/
+.vscode/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Colab notebooks for serving models (kept locally, not versioned)
+tools/colab/
+
+# Assistant working notes (kept locally, not versioned)
+CLAUDE.md
+MEMORY.md
+RULES.md

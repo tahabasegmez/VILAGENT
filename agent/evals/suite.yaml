@@ -1,0 +1,76 @@
+# The fixed eval suite (DEV.md, Phase 0). Keep task ids stable: results are compared by id.
+#
+#   approach        plan (default) | brief
+#   execution_mode  hybrid (default) | vision_only
+#   tags            optional, e.g. [verifier]; run a subset with --tag
+#   check           file_contains: {file, text}  - file is relative to the eval folder
+#                   manual: true                 - the runner asks the operator (default)
+# "{eval_dir}" in a prompt is replaced by the eval folder (%USERPROFILE%\Documents\vilagent-evals).
+
+tasks:
+  - id: notepad-save
+    prompt: Open Notepad, type "VILAGENT eval note", and save the file as {eval_dir}\note.txt
+    check: {file_contains: {file: note.txt, text: VILAGENT eval note}}
+
+  - id: notepad-save-vision-only
+    execution_mode: vision_only
+    prompt: Open Notepad, type "vision only note", and save the file as {eval_dir}\vision.txt
+    check: {file_contains: {file: vision.txt, text: vision only note}}
+
+  - id: notepad-lines
+    prompt: Open Notepad, type the words alpha, beta and gamma each on its own line, and save the file as {eval_dir}\list.txt
+    check: {file_contains: {file: list.txt, text: gamma}}
+
+  - id: notepad-word-wrap
+    prompt: Open Notepad and turn on Word Wrap from its menus.
+    check: {manual: true}
+
+  - id: calculator
+    prompt: Open Calculator and compute 127 multiplied by 43.
+    check: {manual: true}
+
+  - id: settings-display
+    prompt: Open Windows Settings and go to the Display settings page.
+    check: {manual: true}
+
+  - id: explorer-documents
+    prompt: Open File Explorer and navigate to the Documents folder.
+    check: {manual: true}
+
+  - id: web-search
+    prompt: Search the web for "Python 3.12 release notes" and open the official python.org page about it.
+    check: {manual: true}
+
+  - id: web-search-brief
+    approach: brief
+    prompt: Search the web for "Python 3.12 release notes" and open the official python.org page about it.
+    check: {manual: true}
+
+  - id: wikipedia-article
+    prompt: Go to wikipedia.org and open the English article about Alan Turing.
+    check: {manual: true}
+
+  - id: web-form
+    prompt: Go to https://httpbin.org/forms/post, fill in customer name "Eval Bot", telephone "5551234", email "eval@example.com", choose the Medium pizza size, and submit the order.
+    check: {manual: true}
+
+  - id: news-popup
+    prompt: Go to https://www.bbc.com and open the first headline story on the page.
+    check: {manual: true}
+
+  # Phase 11 verifier check: long enough that a step's action budget can run out before it is
+  # done, so the "Step check" setting decides the outcome. Run with --tag verifier, once per setting.
+  - id: form-long
+    tags: [verifier]
+    prompt: Go to https://httpbin.org/forms/post, fill in customer name "Eval Bot", telephone "5551234", email "eval@example.com", choose the Large size, tick every topping, set the delivery time to 19:45, write "leave at the door" in the comments, and submit the order.
+    check: {manual: true}
+
+  - id: notepad-numbers
+    tags: [verifier]
+    prompt: Open Notepad, type the numbers 1 to 30 each on its own line, and save the file as {eval_dir}\numbers.txt
+    check: {file_contains: {file: numbers.txt, text: "30"}}
+
+  - id: paint-shapes
+    tags: [verifier]
+    prompt: Open Paint, draw three separate rectangles side by side, then draw a circle inside the middle rectangle.
+    check: {manual: true}

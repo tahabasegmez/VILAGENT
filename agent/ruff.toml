@@ -1,0 +1,19 @@
+line-length = 240
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "UP"]
+# isinstance(x, (A, B)) is fine.
+ignore = ["UP038"]
+
+[lint.per-file-ignores]
+# Model prompts are long natural-language lines.
+"vilagent/vision/fara.py" = ["E501"]
+"vilagent/agents/planner.py" = ["E501"]
+
+[lint.isort]
+known-first-party = ["vilagent"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
